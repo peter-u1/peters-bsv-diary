@@ -16,8 +16,6 @@ function Sidebar({ entries, selectedEntry, onSelect }: SidebarProps) {
         padding: 20,
       }}
     >
-      <button>+ Neuer Eintrag</button>
-
       <h2>Einträge</h2>
 
       {entries.map((entry) => (

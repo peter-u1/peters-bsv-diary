@@ -1,21 +1,45 @@
 import WalletService from "./WalletService";
 import type { Entry } from "../types/Entry";
+import type { PDPv1 } from "../types/PDP";
 
 class BlockchainService {
-  async save(entry: Entry) {
-    const payload = {
-      version: 1,
-      type: "diary",
-      id: entry.id,
-      createdAt: entry.createdAt,
-      updatedAt: entry.updatedAt,
-      text: entry.text,
-    };
 
-    const json = JSON.stringify(payload);
+    private toPDP(entry: Entry): PDPv1 {
 
-    return await WalletService.createDiaryTransaction(json);
-  }
+        return {
+
+            app: "PeterDiary",
+
+            protocol: "PDP",
+
+            version: 1,
+
+            entry: {
+
+                id: entry.id,
+
+                createdAt: entry.createdAt,
+
+                updatedAt: entry.updatedAt,
+
+                content: entry.text
+
+            }
+
+        };
+
+    }
+
+    async save(entry: Entry) {
+
+        const pdp = this.toPDP(entry);
+
+        return WalletService.createDiaryTransaction(
+            JSON.stringify(pdp)
+        );
+
+    }
+
 }
 
 export default new BlockchainService();

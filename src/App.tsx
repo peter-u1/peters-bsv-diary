@@ -5,6 +5,7 @@ import type { Entry } from "./types/Entry";
 import DiaryService from "./services/DiaryService";
 import WalletService from "./blockchain/WalletService";
 import BlockchainService from "./blockchain/BlockchainService";
+
 function App() {
   const [text, setText] = useState("");
   const [editingText, setEditingText] = useState("");
@@ -34,23 +35,24 @@ function App() {
   };
   const saveSelectedEntryToBsv = async () => {
     if (!selectedEntry) {
-      alert("Bitte zuerst einen Eintrag auswählen.");
+      setWalletStatus("Bitte zuerst einen Eintrag auswählen.");
       return;
     }
   
     try {
-      setWalletStatus("Speichere Eintrag auf BSV...");
+      setWalletStatus("Speichere PDP-Eintrag auf BSV...");
   
       const result = await BlockchainService.save(selectedEntry);
   
-      console.log(result);
+      console.log("BSV result:", result);
   
-      setWalletStatus("Eintrag auf BSV gespeichert ✅");
+      setWalletStatus("PDP-Eintrag auf BSV gespeichert ✅");
     } catch (error) {
       console.error(error);
-      setWalletStatus("BSV Fehler ❌");
+      setWalletStatus("Fehler beim Speichern auf BSV ❌");
     }
   };
+
   useEffect(() => {
     setEntries(DiaryService.load());
   }, []);
