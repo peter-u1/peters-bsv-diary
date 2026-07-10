@@ -113,7 +113,7 @@ function App() {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Schreibe einen neuen privaten Eintrag..."
+            placeholder="Schreibe einen neuen privaten Eintrag...." 
             rows={6}
             style={{ width: "100%", fontSize: 16 }}
           />
