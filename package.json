@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@bsv/sdk": "^2.1.6",
+    "@bsv/simple": "^0.4.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
