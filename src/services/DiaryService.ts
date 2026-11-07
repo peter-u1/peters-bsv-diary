@@ -1,60 +1,107 @@
-import type { Entry } from "../types/Entry";
+import type {
+  Entry,
+  EntryPhoto,
+} from "../types/Entry";
+
+const STORAGE_KEY = "diary_entries";
 
 class DiaryService {
-  private storageKey = "diary_entries";
-
   load(): Entry[] {
-    const saved = localStorage.getItem(this.storageKey);
+    try {
+      const storedEntries =
+        localStorage.getItem(STORAGE_KEY);
 
-    if (!saved) {
+      if (!storedEntries) {
+        return [];
+      }
+
+      const parsed: unknown = JSON.parse(storedEntries);
+
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed.filter(
+        (entry): entry is Entry =>
+          typeof entry === "object" &&
+          entry !== null &&
+          typeof entry.id === "string" &&
+          typeof entry.text === "string" &&
+          typeof entry.createdAt === "string"
+      );
+    } catch (error) {
+      console.error(
+        "Lokale Einträge konnten nicht geladen werden:",
+        error
+      );
+
       return [];
     }
-
-    return JSON.parse(saved);
   }
 
-  saveAll(entries: Entry[]) {
-    localStorage.setItem(this.storageKey, JSON.stringify(entries));
-  }
-
-  create(text: string, existingEntries: Entry[]): Entry[] {
+  create(
+    text: string,
+    entries: Entry[],
+    photo?: EntryPhoto
+  ): Entry[] {
     const newEntry: Entry = {
       id: crypto.randomUUID(),
       text,
-      createdAt: new Date().toLocaleString(),
-      synced: false,
+      createdAt: new Date().toLocaleString("de-AT"),
+      ...(photo ? { photo } : {}),
     };
 
-    const updated = [newEntry, ...existingEntries];
+    const updatedEntries = [newEntry, ...entries];
 
-    this.saveAll(updated);
+    this.save(updatedEntries);
 
-    return updated;
+    return updatedEntries;
   }
 
-  update(id: string, newText: string, existingEntries: Entry[]): Entry[] {
-    const updated = existingEntries.map((entry) =>
-      entry.id === id
-        ? {
-            ...entry,
-            text: newText,
-            updatedAt: new Date().toLocaleString(),
-            synced: false,
-          }
-        : entry
+  update(
+    id: string,
+    text: string,
+    entries: Entry[],
+    photo: EntryPhoto | null
+  ): Entry[] {
+    const updatedEntries = entries.map((entry) => {
+      if (entry.id !== id) {
+        return entry;
+      }
+
+      const updatedEntry: Entry = {
+        ...entry,
+        text,
+        updatedAt: new Date().toLocaleString("de-AT"),
+      };
+
+      if (photo) {
+        return {
+          ...updatedEntry,
+          photo,
+        };
+      }
+
+      const {
+        photo: removedPhoto,
+        ...entryWithoutPhoto
+      } = updatedEntry;
+
+      void removedPhoto;
+
+      return entryWithoutPhoto;
+    });
+
+    this.save(updatedEntries);
+
+    return updatedEntries;
+  }
+
+  private save(entries: Entry[]): void {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(entries)
     );
-
-    this.saveAll(updated);
-
-    return updated;
-  }
-
-  delete(id: string, existingEntries: Entry[]): Entry[] {
-    const updated = existingEntries.filter((entry) => entry.id !== id);
-
-    this.saveAll(updated);
-
-    return updated;
   }
 }
 

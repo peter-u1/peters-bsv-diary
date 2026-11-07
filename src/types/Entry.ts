@@ -1,12 +1,14 @@
+export type EntryPhoto = {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+};
+
 export type Entry = {
-    id: string;
-  
-    createdAt: string;
-    updatedAt?: string;
-  
-    text: string;
-  
-    txid?: string;
-  
-    synced: boolean;
-  };
+  id: string;
+  text: string;
+  createdAt: string;
+  updatedAt?: string;
+  synced?: boolean;
+  photo?: EntryPhoto;
+};
