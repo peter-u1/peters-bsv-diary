@@ -68,10 +68,11 @@ class BlockchainService {
     const result =
       await WalletService.listDiaryActions();
 
-    const actions =
-      (result as any).actions ?? [];
+    const actions = result.actions ?? [];
 
-    const loadedEntries: Entry[] = [];
+    // Pro Eintrags-ID gewinnt die zuletzt geschriebene Version
+    // (die Wallet liefert die Aktionen von alt nach neu).
+    const entriesById = new Map<string, Entry>();
 
     for (const action of actions) {
       const outputs = action.outputs ?? [];
@@ -124,7 +125,9 @@ class BlockchainService {
       const content =
         this.parseDecryptedContent(decrypted);
 
-      loadedEntries.push({
+      entriesById.delete(pdp.entry.id);
+
+      entriesById.set(pdp.entry.id, {
         id: pdp.entry.id,
         text: content.text,
         createdAt: pdp.entry.createdAt,
@@ -141,7 +144,8 @@ class BlockchainService {
       });
     }
 
-    return loadedEntries.reverse();
+    // Neueste zuerst anzeigen.
+    return Array.from(entriesById.values()).reverse();
   }
 
   private parsePdp(

@@ -1,4 +1,4 @@
-import React, {
+import {
   useEffect,
   useRef,
   useState,
@@ -326,6 +326,19 @@ function App() {
 
       console.log("BSV-Ergebnis:", result);
 
+      const updatedEntries =
+        DiaryService.markSynced(
+          selectedEntry.id,
+          entries
+        );
+
+      setEntries(updatedEntries);
+      setSelectedEntry(
+        updatedEntries.find(
+          (entry) => entry.id === selectedEntry.id
+        ) ?? null
+      );
+
       setWalletStatus(
         selectedEntry.photo
           ? "Text und Foto verschlüsselt auf BSV gespeichert ✅"
@@ -366,10 +379,16 @@ function App() {
           diaryPassword
         );
 
-      setEntries(loadedEntries);
+      const mergedEntries =
+        DiaryService.mergeWithChain(
+          loadedEntries,
+          entries
+        );
 
-      if (loadedEntries.length > 0) {
-        const firstEntry = loadedEntries[0];
+      setEntries(mergedEntries);
+
+      if (mergedEntries.length > 0) {
+        const firstEntry = mergedEntries[0];
 
         setSelectedEntry(firstEntry);
         setEditingText(firstEntry.text);
@@ -507,7 +526,8 @@ function App() {
               <input
                 ref={newPhotoInputRef}
                 type="file"
-                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"                onChange={(event) => {
+                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+                onChange={(event) => {
                   void preparePhoto(
                     event.target.files?.[0],
                     "new"
@@ -596,7 +616,7 @@ function App() {
                   <input
                     ref={editingPhotoInputRef}
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                     onChange={(event) => {
                       void preparePhoto(
                         event.target.files?.[0],

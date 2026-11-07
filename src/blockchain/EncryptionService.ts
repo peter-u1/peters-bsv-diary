@@ -18,7 +18,7 @@ class EncryptionService {
     return btoa(binary);
   }
 
-  private base64ToBytes(base64: string): Uint8Array {
+  private base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
 
@@ -31,7 +31,7 @@ class EncryptionService {
 
   private async deriveKey(
     password: string,
-    salt: Uint8Array,
+    salt: Uint8Array<ArrayBuffer>,
   ): Promise<CryptoKey> {
     const passwordKey = await crypto.subtle.importKey(
       "raw",

@@ -73,6 +73,7 @@ class DiaryService {
         ...entry,
         text,
         updatedAt: new Date().toLocaleString("de-AT"),
+        synced: false,
       };
 
       if (photo) {
@@ -95,6 +96,51 @@ class DiaryService {
     this.save(updatedEntries);
 
     return updatedEntries;
+  }
+
+  markSynced(id: string, entries: Entry[]): Entry[] {
+    const updatedEntries = entries.map((entry) =>
+      entry.id === id ? { ...entry, synced: true } : entry
+    );
+
+    this.save(updatedEntries);
+
+    return updatedEntries;
+  }
+
+  /**
+   * Führt von BSV geladene Einträge mit den lokalen zusammen.
+   * Lokale Einträge mit noch nicht hochgeladenen Änderungen
+   * (synced !== true) werden nicht überschrieben.
+   */
+  mergeWithChain(
+    chainEntries: Entry[],
+    localEntries: Entry[]
+  ): Entry[] {
+    const localById = new Map(
+      localEntries.map((entry) => [entry.id, entry])
+    );
+    const chainIds = new Set(
+      chainEntries.map((entry) => entry.id)
+    );
+
+    const localOnly = localEntries.filter(
+      (entry) => !chainIds.has(entry.id)
+    );
+
+    const merged = chainEntries.map((chainEntry) => {
+      const local = localById.get(chainEntry.id);
+
+      return local && local.synced !== true
+        ? local
+        : chainEntry;
+    });
+
+    const result = [...localOnly, ...merged];
+
+    this.save(result);
+
+    return result;
   }
 
   private save(entries: Entry[]): void {
