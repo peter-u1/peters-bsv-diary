@@ -44,8 +44,7 @@ function Sidebar({ entries, selectedId, onSelect, onNew }: SidebarProps) {
               </span>
               <span className="entry-preview">
                 {entry.photo && "📷 "}
-                {entry.text.substring(0, 80)}
-                {entry.text.length > 80 ? "…" : ""}
+                {entry.text}
               </span>
             </button>
           </li>

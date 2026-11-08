@@ -28,6 +28,17 @@ function App() {
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Textfeld wächst mit dem Text mit, damit man alles ohne Scrollen liest.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight + 2}px`;
+    }
+  }, [editorText, selectedId]);
 
   useEffect(() => {
     setEntries(DiaryService.load());
@@ -257,10 +268,12 @@ function App() {
           )}
 
           <textarea
+            ref={textareaRef}
+            className="diary-text"
             value={editorText}
             onChange={(event) => setEditorText(event.target.value)}
             placeholder="Was ist heute passiert?"
-            rows={12}
+            rows={8}
           />
 
           <label className="photo-input">

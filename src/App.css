@@ -1,4 +1,7 @@
 .app {
+  --reading: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    "Times New Roman", serif;
+
   padding: 20px;
   text-align: left;
 }
@@ -87,7 +90,7 @@ button.link {
 }
 
 .sidebar {
-  width: 320px;
+  width: 360px;
   flex-shrink: 0;
 }
 
@@ -146,9 +149,13 @@ button.link {
 
 .entry-preview {
   display: block;
-  font-size: 14px;
-  color: var(--text);
-  margin-top: 2px;
+  font-family: var(--reading);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-h);
+  margin-top: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .badge {
@@ -175,9 +182,32 @@ button.link {
   margin-bottom: 10px;
 }
 
-.editor textarea {
+.editor textarea.diary-text {
   width: 100%;
-  resize: vertical;
+  min-height: 260px;
+  resize: none;
+  overflow: hidden;
+  padding: 24px 28px;
+  font-family: var(--reading);
+  font-size: 21px;
+  line-height: 1.75;
+  letter-spacing: 0.1px;
+  color: var(--text-h);
+  background: var(--code-bg);
+  border-color: transparent;
+  border-radius: 12px;
+}
+
+.editor textarea.diary-text:focus {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 0;
+}
+
+@media (max-width: 760px) {
+  .editor textarea.diary-text {
+    padding: 16px 18px;
+    font-size: 19px;
+  }
 }
 
 .photo-input {
@@ -198,7 +228,7 @@ button.link {
 .photo-preview img {
   display: block;
   max-width: 100%;
-  max-height: 340px;
+  max-height: 560px;
   border-radius: 8px;
   border: 1px solid var(--border);
 }
