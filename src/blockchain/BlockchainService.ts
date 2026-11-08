@@ -1,5 +1,6 @@
 import WalletService from "./WalletService";
 import EncryptionService from "./EncryptionService";
+import ChainIndexService from "./ChainIndexService";
 import type {
   Entry,
   EntryPhoto,
@@ -9,6 +10,22 @@ import type { PDPv1 } from "../types/PDP";
 type DecryptedEntryContent = {
   text: string;
   photo?: EntryPhoto;
+};
+
+/** Ein gefundener Eintrag samt Infos, welche Version die neueste ist */
+type FoundEntry = {
+  entry: Entry;
+  savedAt: number;
+  height: number;
+  order: number;
+};
+
+export type LoadResult = {
+  entries: Entry[];
+  /** Tagebuch-Transaktionen, die gefunden wurden */
+  found: number;
+  /** Davon mit dem Passwort nicht entschlüsselbar */
+  undecryptable: number;
 };
 
 class BlockchainService {
@@ -41,6 +58,8 @@ class BlockchainService {
           ? { updatedAt: entry.updatedAt }
           : {}),
 
+        savedAt: Date.now(),
+
         encryption: "AES-256-GCM",
         ciphertext: encrypted.ciphertext,
         salt: encrypted.salt,
@@ -48,59 +67,92 @@ class BlockchainService {
       },
     };
 
-    console.log(
-      "Verschlüsselter PDP-Payload:",
-      pdp
-    );
+    const indexLockingScript =
+      await ChainIndexService.getIndexLockingScript(
+        password
+      );
 
     return WalletService.createDiaryTransaction(
-      JSON.stringify(pdp)
+      JSON.stringify(pdp),
+      indexLockingScript
     );
   }
 
-  async loadEntries(
-    password: string
-  ): Promise<Entry[]> {
+  /**
+   * Lädt alle Einträge direkt von der Chain (ohne Wallet).
+   * Ist zusätzlich eine Wallet verbunden, werden auch ältere
+   * Einträge gefunden, die noch ohne Index-Adresse gespeichert wurden.
+   */
+  async loadEntries(password: string): Promise<LoadResult> {
     if (!password.trim()) {
       throw new Error("Tagebuch-Passwort fehlt");
     }
 
-    const result =
-      await WalletService.listDiaryActions();
+    const scripts: {
+      script: string;
+      height: number;
+      order: number;
+    }[] = [];
 
-    const actions = result.actions ?? [];
+    const seenTxids = new Set<string>();
+    let order = 0;
 
-    // Pro Eintrags-ID gewinnt die zuletzt geschriebene Version
-    // (die Wallet liefert die Aktionen von alt nach neu).
-    const entriesById = new Map<string, Entry>();
+    const chainTxs =
+      await ChainIndexService.loadDiaryTransactions(password);
 
-    for (const action of actions) {
-      const outputs = action.outputs ?? [];
+    for (const tx of chainTxs) {
+      seenTxids.add(tx.txid);
 
-      const diaryOutput = outputs.find(
-        (output: any) =>
-          output.outputDescription ===
-            "Encrypted PDP diary entry" &&
-          typeof output.lockingScript === "string" &&
-          output.lockingScript.startsWith("006a")
+      const script = tx.outputScripts.find((candidate) =>
+        candidate.startsWith("006a")
       );
 
-      if (!diaryOutput) {
-        continue;
+      if (script) {
+        scripts.push({
+          script,
+          height: tx.height,
+          order: order++,
+        });
       }
+    }
 
+    if (WalletService.isConnected()) {
+      const result =
+        await WalletService.listDiaryActions();
+
+      for (const action of result.actions) {
+        if (seenTxids.has(action.txid)) {
+          continue;
+        }
+
+        const diaryOutput = (action.outputs ?? []).find(
+          (output: any) =>
+            output.outputDescription ===
+              "Encrypted PDP diary entry" &&
+            typeof output.lockingScript === "string" &&
+            output.lockingScript.startsWith("006a")
+        );
+
+        if (diaryOutput?.lockingScript) {
+          scripts.push({
+            script: diaryOutput.lockingScript,
+            height: 0,
+            order: order++,
+          });
+        }
+      }
+    }
+
+    const entriesById = new Map<string, FoundEntry>();
+    let found = 0;
+    let undecryptable = 0;
+
+    for (const { script, height, order: position } of scripts) {
       let pdp: PDPv1;
 
       try {
-        pdp = this.parsePdp(
-          diaryOutput.lockingScript
-        );
-      } catch (error) {
-        console.warn(
-          "Eine Aktion enthält kein gültiges PDP-JSON:",
-          error
-        );
-
+        pdp = this.parsePdp(script);
+      } catch {
         continue;
       }
 
@@ -112,8 +164,12 @@ class BlockchainService {
         continue;
       }
 
-      const decrypted =
-        await EncryptionService.decrypt(
+      found++;
+
+      let decrypted: string;
+
+      try {
+        decrypted = await EncryptionService.decrypt(
           {
             ciphertext: pdp.entry.ciphertext,
             salt: pdp.entry.salt,
@@ -121,31 +177,63 @@ class BlockchainService {
           },
           password
         );
+      } catch {
+        undecryptable++;
+        continue;
+      }
 
       const content =
         this.parseDecryptedContent(decrypted);
 
-      entriesById.delete(pdp.entry.id);
+      const candidate: FoundEntry = {
+        entry: {
+          id: pdp.entry.id,
+          text: content.text,
+          createdAt: pdp.entry.createdAt,
 
-      entriesById.set(pdp.entry.id, {
-        id: pdp.entry.id,
-        text: content.text,
-        createdAt: pdp.entry.createdAt,
+          ...(pdp.entry.updatedAt
+            ? { updatedAt: pdp.entry.updatedAt }
+            : {}),
 
-        ...(pdp.entry.updatedAt
-          ? { updatedAt: pdp.entry.updatedAt }
-          : {}),
+          ...(content.photo
+            ? { photo: content.photo }
+            : {}),
 
-        ...(content.photo
-          ? { photo: content.photo }
-          : {}),
+          synced: true,
+        },
+        savedAt: pdp.entry.savedAt ?? 0,
+        // Unbestätigt (0) gilt als neuestes
+        height: height === 0 ? Number.MAX_SAFE_INTEGER : height,
+        order: position,
+      };
 
-        synced: true,
-      });
+      const existing = entriesById.get(pdp.entry.id);
+
+      if (
+        !existing ||
+        this.isNewer(candidate, existing)
+      ) {
+        entriesById.set(pdp.entry.id, candidate);
+      }
     }
 
-    // Neueste zuerst anzeigen.
-    return Array.from(entriesById.values()).reverse();
+    const entries = Array.from(entriesById.values())
+      .sort((a, b) => (this.isNewer(a, b) ? -1 : 1))
+      .map((item) => item.entry);
+
+    return { entries, found, undecryptable };
+  }
+
+  private isNewer(a: FoundEntry, b: FoundEntry): boolean {
+    if (a.savedAt !== b.savedAt) {
+      return a.savedAt > b.savedAt;
+    }
+
+    if (a.height !== b.height) {
+      return a.height > b.height;
+    }
+
+    return a.order > b.order;
   }
 
   private parsePdp(

@@ -4,11 +4,13 @@ class WalletService {
   private client: WalletClient | null = null;
 
   async connect() {
-    this.client = new WalletClient();
+    const client = new WalletClient();
 
-    const result = await this.client.getPublicKey({
+    const result = await client.getPublicKey({
       identityKey: true,
     });
+
+    this.client = client;
 
     console.log("Wallet public key:", result);
 
@@ -19,7 +21,14 @@ class WalletService {
     return this.createDiaryTransaction("Hello from BSV Diary");
   }
 
-  async createDiaryTransaction(text: string) {
+  isConnected(): boolean {
+    return this.client !== null;
+  }
+
+  async createDiaryTransaction(
+    text: string,
+    indexLockingScript?: string
+  ) {
     if (!this.client) {
       throw new Error("Wallet ist nicht verbunden");
     }
@@ -39,6 +48,18 @@ class WalletService {
           lockingScript: "006a" + hex,
           outputDescription: "Encrypted PDP diary entry",
         },
+
+        // 1 Satoshi an die Index-Adresse: damit lässt sich der Eintrag
+        // später ohne Wallet direkt auf der Chain wiederfinden.
+        ...(indexLockingScript
+          ? [
+              {
+                satoshis: 1,
+                lockingScript: indexLockingScript,
+                outputDescription: "PDP diary index",
+              },
+            ]
+          : []),
       ],
     });
 

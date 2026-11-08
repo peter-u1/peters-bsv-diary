@@ -371,13 +371,25 @@ function App() {
 
     try {
       setWalletStatus(
-        "Lade und entschlüssele Einträge von BSV..."
+        "Lade Einträge direkt von der BSV-Chain und entschlüssele sie..."
       );
 
-      const loadedEntries =
+      const result =
         await BlockchainService.loadEntries(
           diaryPassword
         );
+
+      const loadedEntries = result.entries;
+
+      if (
+        result.found > 0 &&
+        loadedEntries.length === 0
+      ) {
+        setWalletStatus(
+          `${result.found} Einträge gefunden, aber keiner ließ sich entschlüsseln – stimmt das Passwort?`
+        );
+        return;
+      }
 
       const mergedEntries =
         DiaryService.mergeWithChain(
@@ -401,8 +413,13 @@ function App() {
         setEditingPhoto(null);
       }
 
+      const skipped =
+        result.undecryptable > 0
+          ? ` (${result.undecryptable} mit anderem Passwort übersprungen)`
+          : "";
+
       setWalletStatus(
-        `${loadedEntries.length} Eintrag/Einträge von BSV geladen ✅`
+        `${loadedEntries.length} Eintrag/Einträge von BSV geladen ✅${skipped}`
       );
     } catch (error) {
       console.error(
