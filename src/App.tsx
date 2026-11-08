@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type React from "react";
 
 import Sidebar from "./components/Sidebar";
 
@@ -12,6 +13,25 @@ import BlockchainService from "./blockchain/BlockchainService";
 
 import "./App.css";
 
+const FONT_SIZE_KEY = "diary_font_size";
+const FONT_SIZE_DEFAULT = 17;
+const FONT_SIZE_MIN = 13;
+const FONT_SIZE_MAX = 28;
+
+const loadFontSize = () => {
+  try {
+    const stored = Number(localStorage.getItem(FONT_SIZE_KEY));
+
+    if (stored >= FONT_SIZE_MIN && stored <= FONT_SIZE_MAX) {
+      return stored;
+    }
+  } catch {
+    // Speicher nicht verfügbar – Standard nehmen
+  }
+
+  return FONT_SIZE_DEFAULT;
+};
+
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -20,6 +40,7 @@ function App() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [fontSize, setFontSize] = useState(loadFontSize);
 
   // null = neuer Eintrag
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -38,11 +59,28 @@ function App() {
       textarea.style.height = "auto";
       textarea.style.height = `${textarea.scrollHeight + 2}px`;
     }
-  }, [editorText, selectedId]);
+  }, [editorText, selectedId, fontSize]);
 
   useEffect(() => {
     setEntries(DiaryService.load());
   }, []);
+
+  const changeFontSize = (delta: number) => {
+    setFontSize((current) => {
+      const next = Math.min(
+        FONT_SIZE_MAX,
+        Math.max(FONT_SIZE_MIN, current + delta)
+      );
+
+      try {
+        localStorage.setItem(FONT_SIZE_KEY, String(next));
+      } catch {
+        // ignorieren
+      }
+
+      return next;
+    });
+  };
 
   const selectedEntry =
     entries.find((entry) => entry.id === selectedId) ?? null;
@@ -214,7 +252,10 @@ function App() {
   };
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={{ "--entry-size": `${fontSize}px` } as React.CSSProperties}
+    >
       <header className="topbar">
         <h1>Diary of Peter</h1>
 
@@ -241,6 +282,26 @@ function App() {
               ? `Auf BSV speichern (${unsyncedEntries.length})`
               : "Alles auf BSV ✓"}
           </button>
+
+          <div className="font-size" title="Schriftgröße der Einträge">
+            <button
+              type="button"
+              onClick={() => changeFontSize(-1)}
+              disabled={fontSize <= FONT_SIZE_MIN}
+              aria-label="Schrift kleiner"
+            >
+              A−
+            </button>
+            <span>{fontSize}</span>
+            <button
+              type="button"
+              onClick={() => changeFontSize(1)}
+              disabled={fontSize >= FONT_SIZE_MAX}
+              aria-label="Schrift größer"
+            >
+              A+
+            </button>
+          </div>
         </div>
 
         {status && <p className="status">{status}</p>}

@@ -1,7 +1,4 @@
 .app {
-  --reading: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
-    "Times New Roman", serif;
-
   padding: 20px;
   text-align: left;
 }
@@ -29,6 +26,23 @@
 .topbar-actions input {
   flex: 1 1 200px;
   max-width: 300px;
+}
+
+.font-size {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.font-size span {
+  min-width: 2ch;
+  text-align: center;
+  font-size: 14px;
+}
+
+.font-size button {
+  padding: 9px 11px;
 }
 
 .status {
@@ -90,8 +104,8 @@ button.link {
 }
 
 .sidebar {
-  width: 360px;
-  flex-shrink: 0;
+  flex: 0 0 44%;
+  max-width: 600px;
 }
 
 .editor {
@@ -110,7 +124,9 @@ button.link {
   }
 
   .sidebar {
+    flex-basis: auto;
     width: 100%;
+    max-width: none;
   }
 }
 
@@ -149,8 +165,7 @@ button.link {
 
 .entry-preview {
   display: block;
-  font-family: var(--reading);
-  font-size: 15px;
+  font-size: calc(var(--entry-size, 17px) * 0.9);
   line-height: 1.55;
   color: var(--text-h);
   margin-top: 6px;
@@ -187,11 +202,9 @@ button.link {
   min-height: 260px;
   resize: none;
   overflow: hidden;
-  padding: 24px 28px;
-  font-family: var(--reading);
-  font-size: 21px;
-  line-height: 1.75;
-  letter-spacing: 0.1px;
+  padding: 20px 24px;
+  font-size: var(--entry-size, 17px);
+  line-height: 1.65;
   color: var(--text-h);
   background: var(--code-bg);
   border-color: transparent;
@@ -205,8 +218,7 @@ button.link {
 
 @media (max-width: 760px) {
   .editor textarea.diary-text {
-    padding: 16px 18px;
-    font-size: 19px;
+    padding: 14px 16px;
   }
 }
 
