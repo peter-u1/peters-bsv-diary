@@ -19,6 +19,7 @@ import "./App.css";
 
 const FONT_SIZE = { key: "diary_font_size", min: 13, max: 28, step: 1, initial: 17 };
 const LIST_WIDTH = { key: "diary_list_width", min: 25, max: 70, step: 5, initial: 44 };
+const EDITOR_LINES = { key: "diary_editor_lines", min: 3, max: 30, step: 1, initial: 10 };
 
 type Setting = typeof FONT_SIZE;
 
@@ -64,6 +65,28 @@ const errorText = (error: unknown) =>
 
 const diaryOf = (entry: Entry) => entry.diaryId ?? DEFAULT_DIARY.id;
 
+/** "8.11.2026, 14:10:00" → Zeitstempel (für die Sortierung neueste zuerst) */
+const createdTime = (entry: Entry) => {
+  const match = entry.createdAt.match(
+    /(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4}),?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/
+  );
+
+  if (!match) {
+    return 0;
+  }
+
+  const [, day, month, year, hour, minute, second] = match;
+
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second ?? 0)
+  ).getTime();
+};
+
 function App() {
   const [diaryPassword, setDiaryPassword] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -72,6 +95,7 @@ function App() {
 
   const [fontSize, changeFontSize] = useSetting(FONT_SIZE);
   const [listWidth, changeListWidth] = useSetting(LIST_WIDTH);
+  const [editorLines, changeEditorLines] = useSetting(EDITOR_LINES);
 
   const [diaries, setDiaries] = useState<Diary[]>(() =>
     DiaryService.loadDiaries()
@@ -93,28 +117,18 @@ function App() {
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setEntries(DiaryService.load());
   }, []);
 
-  // Textfeld wächst mit dem Text mit, damit man alles ohne Scrollen liest.
-  useEffect(() => {
-    const textarea = textareaRef.current;
-
-    if (textarea) {
-      textarea.style.height = "auto";
-      textarea.style.height = `${textarea.scrollHeight + 2}px`;
-    }
-  }, [editorText, selectedId, fontSize, listWidth]);
-
   const activeDiary =
     diaries.find((diary) => diary.id === activeDiaryId) ?? DEFAULT_DIARY;
 
-  const visibleEntries = entries.filter(
-    (entry) => diaryOf(entry) === activeDiary.id && !entry.deleted
-  );
+  // Neueste zuerst – nach Schreibdatum, nicht nach Upload-Reihenfolge
+  const visibleEntries = entries
+    .filter((entry) => diaryOf(entry) === activeDiary.id && !entry.deleted)
+    .sort((a, b) => createdTime(b) - createdTime(a));
 
   const selectedEntry =
     visibleEntries.find((entry) => entry.id === selectedId) ?? null;
@@ -439,6 +453,13 @@ function App() {
               canIncrease={fontSize < FONT_SIZE.max}
             />
             <Stepper
+              label="Feld"
+              value={editorLines}
+              onChange={changeEditorLines}
+              canDecrease={editorLines > EDITOR_LINES.min}
+              canIncrease={editorLines < EDITOR_LINES.max}
+            />
+            <Stepper
               label="Liste"
               className="hide-mobile"
               value={`${listWidth}%`}
@@ -598,12 +619,11 @@ function App() {
           )}
 
           <textarea
-            ref={textareaRef}
             className="diary-text"
             value={editorText}
             onChange={(event) => setEditorText(event.target.value)}
             placeholder="Was ist heute passiert?"
-            rows={8}
+            rows={editorLines}
           />
 
           <label className="photo-input">

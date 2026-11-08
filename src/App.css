@@ -300,9 +300,8 @@ button.link {
 
 .editor textarea.diary-text {
   width: 100%;
-  min-height: 260px;
-  resize: none;
-  overflow: hidden;
+  resize: vertical;
+  overflow-y: auto;
   padding: 20px 24px;
   font-size: var(--entry-size, 17px);
   line-height: 1.65;
