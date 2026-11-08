@@ -28,12 +28,86 @@ export type LoadResult = {
   undecryptable: number;
 };
 
+// Obergrenzen pro Transaktion (Fotos sind ca. 300 KB als Text)
+const MAX_BATCH_BYTES = 900_000;
+const MAX_BATCH_ENTRIES = 25;
+
 class BlockchainService {
-  async save(entry: Entry, password: string) {
+  /**
+   * Speichert mehrere Einträge auf BSV. Kleine Einträge kommen gemeinsam
+   * in eine Transaktion; große (mit Foto) werden auf mehrere verteilt.
+   * onSaved wird nach jeder erfolgreichen Transaktion aufgerufen.
+   */
+  async saveMany(
+    entries: Entry[],
+    password: string,
+    onSaved?: (savedIds: string[], batch: number, batches: number) => void
+  ): Promise<number> {
     if (!password.trim()) {
       throw new Error("Tagebuch-Passwort fehlt");
     }
 
+    const prepared: { id: string; payload: string }[] = [];
+
+    for (const entry of entries) {
+      prepared.push({
+        id: entry.id,
+        payload: await this.buildPayload(entry, password),
+      });
+    }
+
+    const batches: { id: string; payload: string }[][] = [];
+    let current: { id: string; payload: string }[] = [];
+    let currentSize = 0;
+
+    for (const item of prepared) {
+      if (
+        current.length > 0 &&
+        (currentSize + item.payload.length > MAX_BATCH_BYTES ||
+          current.length >= MAX_BATCH_ENTRIES)
+      ) {
+        batches.push(current);
+        current = [];
+        currentSize = 0;
+      }
+
+      current.push(item);
+      currentSize += item.payload.length;
+    }
+
+    if (current.length > 0) {
+      batches.push(current);
+    }
+
+    const indexLockingScript =
+      await ChainIndexService.getIndexLockingScript(password);
+
+    let saved = 0;
+
+    for (let index = 0; index < batches.length; index++) {
+      const batch = batches[index];
+
+      await WalletService.createDiaryTransaction(
+        batch.map((item) => item.payload),
+        indexLockingScript
+      );
+
+      saved += batch.length;
+
+      onSaved?.(
+        batch.map((item) => item.id),
+        index + 1,
+        batches.length
+      );
+    }
+
+    return saved;
+  }
+
+  private async buildPayload(
+    entry: Entry,
+    password: string
+  ): Promise<string> {
     const content: DecryptedEntryContent = {
       text: entry.text,
       ...(entry.photo ? { photo: entry.photo } : {}),
@@ -67,15 +141,7 @@ class BlockchainService {
       },
     };
 
-    const indexLockingScript =
-      await ChainIndexService.getIndexLockingScript(
-        password
-      );
-
-    return WalletService.createDiaryTransaction(
-      JSON.stringify(pdp),
-      indexLockingScript
-    );
+    return JSON.stringify(pdp);
   }
 
   /**
@@ -103,16 +169,14 @@ class BlockchainService {
     for (const tx of chainTxs) {
       seenTxids.add(tx.txid);
 
-      const script = tx.outputScripts.find((candidate) =>
-        candidate.startsWith("006a")
-      );
-
-      if (script) {
-        scripts.push({
-          script,
-          height: tx.height,
-          order: order++,
-        });
+      for (const script of tx.outputScripts) {
+        if (script.startsWith("006a")) {
+          scripts.push({
+            script,
+            height: tx.height,
+            order: order++,
+          });
+        }
       }
     }
 
@@ -125,7 +189,7 @@ class BlockchainService {
           continue;
         }
 
-        const diaryOutput = (action.outputs ?? []).find(
+        const diaryOutputs = (action.outputs ?? []).filter(
           (output: any) =>
             output.outputDescription ===
               "Encrypted PDP diary entry" &&
@@ -133,9 +197,9 @@ class BlockchainService {
             output.lockingScript.startsWith("006a")
         );
 
-        if (diaryOutput?.lockingScript) {
+        for (const output of diaryOutputs) {
           scripts.push({
-            script: diaryOutput.lockingScript,
+            script: output.lockingScript,
             height: 0,
             order: order++,
           });

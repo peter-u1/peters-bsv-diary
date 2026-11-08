@@ -1,4 +1,3 @@
-import { heicTo, isHeic } from "heic-to";
 import type { EntryPhoto } from "../types/Entry";
 
 const STANDARD_IMAGE_TYPES = new Set([
@@ -24,6 +23,10 @@ class PhotoService {
         "Das ursprüngliche Foto darf maximal 25 MB groß sein."
       );
     }
+
+    // HEIC-Unterstützung ist groß (mehrere MB) und wird erst geladen,
+    // wenn wirklich ein Foto ausgewählt wird.
+    const { heicTo, isHeic } = await import("heic-to");
 
     const heicByName = /\.(heic|heif)$/i.test(file.name);
     const heicByType = HEIC_IMAGE_TYPES.has(file.type);

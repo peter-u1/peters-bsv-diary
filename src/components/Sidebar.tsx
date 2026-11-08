@@ -2,41 +2,56 @@ import type { Entry } from "../types/Entry";
 
 type SidebarProps = {
   entries: Entry[];
-  selectedEntry: Entry | null;
+  selectedId: string | null;
   onSelect: (entry: Entry) => void;
+  onNew: () => void;
 };
 
-function Sidebar({ entries, selectedEntry, onSelect }: SidebarProps) {
+function Sidebar({ entries, selectedId, onSelect, onNew }: SidebarProps) {
   return (
-    <div
-      style={{
-        width: 450,
-        minWidth: 450,
-        borderRight: "1px solid #ccc",
-        padding: 20,
-      }}
-    >
-      <h2>Einträge</h2>
+    <aside className="sidebar">
+      <button
+        type="button"
+        className={`new-entry ${selectedId === null ? "active" : ""}`}
+        onClick={onNew}
+      >
+        + Neuer Eintrag
+      </button>
 
-      {entries.map((entry) => (
-        <div
-          key={entry.id}
-          onClick={() => onSelect(entry)}
-          style={{
-            borderBottom: "1px solid #ddd",
-            padding: "10px 0",
-            cursor: "pointer",
-            backgroundColor:
-              selectedEntry?.id === entry.id ? "#eee" : "transparent",
-          }}
-        >
-          <strong>{entry.createdAt}</strong>
-          <br />
-          {entry.text.substring(0, 80)}
-          {entry.text.length > 80 ? "..." : ""}
-        </div>
-      ))}
-    </div>
+      {entries.length === 0 && (
+        <p className="empty">Noch keine Einträge.</p>
+      )}
+
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <button
+              type="button"
+              className={selectedId === entry.id ? "active" : ""}
+              onClick={() => onSelect(entry)}
+            >
+              <span className="entry-head">
+                <strong>{entry.createdAt}</strong>
+                {entry.synced ? (
+                  <span className="badge synced" title="Auf BSV gespeichert">
+                    ✓ BSV
+                  </span>
+                ) : (
+                  <span className="badge pending" title="Nur lokal gespeichert">
+                    ● lokal
+                  </span>
+                )}
+              </span>
+              <span className="entry-preview">
+                {entry.photo && "📷 "}
+                {entry.text.substring(0, 80)}
+                {entry.text.length > 80 ? "…" : ""}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </aside>
   );
 }
 

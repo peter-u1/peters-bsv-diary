@@ -1,16 +1,8 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 
-import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
 
-import type {
-  Entry,
-  EntryPhoto,
-} from "./types/Entry";
+import type { Entry, EntryPhoto } from "./types/Entry";
 
 import DiaryService from "./services/DiaryService";
 import PhotoService from "./services/PhotoService";
@@ -18,663 +10,299 @@ import PhotoService from "./services/PhotoService";
 import WalletService from "./blockchain/WalletService";
 import BlockchainService from "./blockchain/BlockchainService";
 
-type PhotoPreviewProps = {
-  photo: EntryPhoto;
-  onRemove: () => void;
-};
+import "./App.css";
 
-function PhotoPreview({
-  photo,
-  onRemove,
-}: PhotoPreviewProps) {
-  return (
-    <div
-      style={{
-        marginTop: 12,
-        marginBottom: 12,
-      }}
-    >
-      <img
-        src={photo.dataUrl}
-        alt={photo.name}
-        style={{
-          display: "block",
-          maxWidth: "100%",
-          width: 420,
-          maxHeight: 340,
-          objectFit: "contain",
-          borderRadius: 8,
-          border: "1px solid #ccc",
-        }}
-      />
-
-      <div
-        style={{
-          marginTop: 6,
-          fontSize: 13,
-        }}
-      >
-        {photo.name}
-      </div>
-
-      <button
-        type="button"
-        onClick={onRemove}
-        style={{
-          marginTop: 8,
-        }}
-      >
-        Foto entfernen
-      </button>
-    </div>
-  );
-}
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 function App() {
-  const [diaryPassword, setDiaryPassword] =
-    useState("");
+  const [diaryPassword, setDiaryPassword] = useState("");
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const [text, setText] = useState("");
-  const [editingText, setEditingText] =
-    useState("");
+  // null = neuer Eintrag
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editorText, setEditorText] = useState("");
+  const [editorPhoto, setEditorPhoto] = useState<EntryPhoto | null>(null);
 
-  const [entries, setEntries] =
-    useState<Entry[]>([]);
-
-  const [selectedEntry, setSelectedEntry] =
-    useState<Entry | null>(null);
-
-  const [newPhoto, setNewPhoto] =
-    useState<EntryPhoto | null>(null);
-
-  const [editingPhoto, setEditingPhoto] =
-    useState<EntryPhoto | null>(null);
-
-  const [walletStatus, setWalletStatus] =
-    useState("Wallet nicht verbunden");
-
-  const newPhotoInputRef =
-    useRef<HTMLInputElement>(null);
-
-  const editingPhotoInputRef =
-    useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     setEntries(DiaryService.load());
   }, []);
 
-  const connectWallet = async () => {
-    try {
-      setWalletStatus("Verbinde Wallet...");
+  const selectedEntry =
+    entries.find((entry) => entry.id === selectedId) ?? null;
 
-      await WalletService.connect();
+  const unsyncedEntries = entries.filter(
+    (entry) => entry.synced !== true
+  );
 
-      setWalletStatus("Wallet verbunden ✅");
-    } catch (error) {
-      console.error("Wallet-Fehler:", error);
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      setWalletStatus(
-        `Wallet-Verbindung fehlgeschlagen: ${message}`
-      );
+  const resetPhotoInput = () => {
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
     }
   };
 
-  const loadDiaryActions = async () => {
-    try {
-      setWalletStatus(
-        "Lade Tagebuch-Aktionen..."
-      );
+  const openEntry = (entry: Entry | null) => {
+    setSelectedId(entry?.id ?? null);
+    setEditorText(entry?.text ?? "");
+    setEditorPhoto(entry?.photo ?? null);
+    resetPhotoInput();
 
-      const result =
-        await WalletService.listDiaryActions();
-
-      console.log("Diary Actions:", result);
-
-      setWalletStatus(
-        `${result.totalActions} Tagebuch-Aktion(en) gefunden ✅`
-      );
-    } catch (error) {
-      console.error(
-        "Fehler beim Laden der Aktionen:",
-        error
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      setWalletStatus(
-        `Aktionen konnten nicht geladen werden: ${message}`
-      );
+    // Am Handy steht die Liste unter dem Editor: nach oben scrollen.
+    if (window.innerWidth <= 760) {
+      editorRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   };
 
-  const preparePhoto = async (
-    file: File | undefined,
-    destination: "new" | "editing"
-  ) => {
+  const preparePhoto = async (file: File | undefined) => {
     if (!file) {
       return;
     }
 
     try {
-      setWalletStatus(
-        "Foto wird verkleinert und vorbereitet..."
-      );
+      setStatus("Foto wird verkleinert und vorbereitet...");
+      setEditorPhoto(await PhotoService.prepare(file));
+      setStatus("Foto ist bereit ✅");
+    } catch (error) {
+      console.error("Foto-Fehler:", error);
+      setStatus(`Foto-Fehler: ${errorText(error)}`);
+    }
+  };
 
-      const preparedPhoto =
-        await PhotoService.prepare(file);
+  const saveLocally = () => {
+    if (!editorText.trim()) {
+      setStatus("Bitte zuerst einen Text eingeben.");
+      return;
+    }
 
-      if (destination === "new") {
-        setNewPhoto(preparedPhoto);
+    try {
+      if (selectedEntry) {
+        const updated = DiaryService.update(
+          selectedEntry.id,
+          editorText.trim(),
+          entries,
+          editorPhoto
+        );
+
+        setEntries(updated);
+        setStatus("Änderungen lokal gespeichert ✅ – noch nicht auf BSV.");
       } else {
-        setEditingPhoto(preparedPhoto);
-      }
-
-      setWalletStatus("Foto ist bereit ✅");
-    } catch (error) {
-      console.error(
-        "Foto konnte nicht vorbereitet werden:",
-        error
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      setWalletStatus(
-        `Foto-Fehler: ${message}`
-      );
-    }
-  };
-
-  const saveEntry = () => {
-    if (!text.trim()) {
-      setWalletStatus(
-        "Bitte zuerst einen Text eingeben."
-      );
-      return;
-    }
-
-    try {
-      const updatedEntries =
-        DiaryService.create(
-          text.trim(),
+        const updated = DiaryService.create(
+          editorText.trim(),
           entries,
-          newPhoto ?? undefined
+          editorPhoto ?? undefined
         );
 
-      const newestEntry = updatedEntries[0];
-
-      setEntries(updatedEntries);
-      setSelectedEntry(newestEntry);
-      setEditingText(newestEntry.text);
-      setEditingPhoto(
-        newestEntry.photo ?? null
-      );
-
-      setText("");
-      setNewPhoto(null);
-
-      if (newPhotoInputRef.current) {
-        newPhotoInputRef.current.value = "";
+        setEntries(updated);
+        openEntry(null);
+        setStatus("Eintrag lokal gespeichert ✅ – noch nicht auf BSV.");
       }
-
-      setWalletStatus(
-        "Eintrag lokal gespeichert ✅"
-      );
     } catch (error) {
-      console.error(
-        "Lokales Speichern fehlgeschlagen:",
-        error
-      );
-
-      setWalletStatus(
+      console.error("Lokales Speichern fehlgeschlagen:", error);
+      setStatus(
         "Lokales Speichern fehlgeschlagen. Möglicherweise ist der Browserspeicher voll."
       );
     }
   };
 
-  const selectEntry = (entry: Entry) => {
-    setSelectedEntry(entry);
-    setEditingText(entry.text);
-    setEditingPhoto(entry.photo ?? null);
-  };
-
-  const saveSelectedEntry = () => {
-    if (!selectedEntry) {
-      setWalletStatus(
-        "Bitte zuerst einen Eintrag auswählen."
-      );
-      return;
-    }
-
-    if (!editingText.trim()) {
-      setWalletStatus(
-        "Der Text darf nicht leer sein."
-      );
-      return;
-    }
-
-    try {
-      const updatedEntries =
-        DiaryService.update(
-          selectedEntry.id,
-          editingText.trim(),
-          entries,
-          editingPhoto
-        );
-
-      const updatedSelectedEntry =
-        updatedEntries.find(
-          (entry) =>
-            entry.id === selectedEntry.id
-        ) ?? null;
-
-      setEntries(updatedEntries);
-      setSelectedEntry(updatedSelectedEntry);
-
-      setWalletStatus(
-        "Änderungen lokal gespeichert ✅"
-      );
-    } catch (error) {
-      console.error(
-        "Änderungen konnten nicht gespeichert werden:",
-        error
-      );
-
-      setWalletStatus(
-        "Lokales Speichern fehlgeschlagen. Möglicherweise ist der Browserspeicher voll."
-      );
-    }
-  };
-
-  const saveSelectedEntryToBsv = async () => {
-    if (!selectedEntry) {
-      setWalletStatus(
-        "Bitte zuerst einen Eintrag auswählen."
-      );
-      return;
-    }
-
+  const uploadUnsynced = async () => {
     if (!diaryPassword.trim()) {
-      setWalletStatus(
-        "Bitte zuerst das Tagebuch-Passwort eingeben."
-      );
+      setStatus("Bitte zuerst das Tagebuch-Passwort eingeben.");
       return;
     }
 
+    if (unsyncedEntries.length === 0) {
+      setStatus("Alles ist schon auf BSV gespeichert ✅");
+      return;
+    }
+
+    setBusy(true);
+
     try {
-      setWalletStatus(
-        selectedEntry.photo
-          ? "Verschlüssele Text und Foto und speichere auf BSV..."
-          : "Verschlüssele Text und speichere auf BSV..."
+      if (!WalletService.isConnected()) {
+        setStatus("Verbinde Wallet...");
+        await WalletService.connect();
+      }
+
+      setStatus(
+        `Verschlüssele ${unsyncedEntries.length} Eintrag/Einträge und speichere auf BSV...`
       );
 
-      const result =
-        await BlockchainService.save(
-          selectedEntry,
-          diaryPassword
-        );
+      let current = entries;
 
-      console.log("BSV-Ergebnis:", result);
+      const saved = await BlockchainService.saveMany(
+        unsyncedEntries,
+        diaryPassword,
+        (savedIds, batch, batches) => {
+          current = DiaryService.markSynced(savedIds, current);
+          setEntries(current);
 
-      const updatedEntries =
-        DiaryService.markSynced(
-          selectedEntry.id,
-          entries
-        );
-
-      setEntries(updatedEntries);
-      setSelectedEntry(
-        updatedEntries.find(
-          (entry) => entry.id === selectedEntry.id
-        ) ?? null
+          if (batches > 1) {
+            setStatus(
+              `Transaktion ${batch} von ${batches} gespeichert...`
+            );
+          }
+        }
       );
 
-      setWalletStatus(
-        selectedEntry.photo
-          ? "Text und Foto verschlüsselt auf BSV gespeichert ✅"
-          : "Eintrag verschlüsselt auf BSV gespeichert ✅"
-      );
+      setStatus(`${saved} Eintrag/Einträge verschlüsselt auf BSV gespeichert ✅`);
     } catch (error) {
-      console.error(
-        "BSV-Speichern fehlgeschlagen:",
-        error
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      setWalletStatus(
-        `BSV-Speichern fehlgeschlagen: ${message}`
-      );
+      console.error("BSV-Speichern fehlgeschlagen:", error);
+      setStatus(`BSV-Speichern fehlgeschlagen: ${errorText(error)}`);
+    } finally {
+      setBusy(false);
     }
   };
 
-  const loadEntriesFromBsv = async () => {
+  const loadFromBsv = async () => {
     if (!diaryPassword.trim()) {
-      setWalletStatus(
-        "Bitte zuerst das Tagebuch-Passwort eingeben."
-      );
+      setStatus("Bitte zuerst das Tagebuch-Passwort eingeben.");
       return;
     }
 
+    setBusy(true);
+
     try {
-      setWalletStatus(
-        "Lade Einträge direkt von der BSV-Chain und entschlüssele sie..."
-      );
+      setStatus("Lade Einträge von der BSV-Chain...");
 
-      const result =
-        await BlockchainService.loadEntries(
-          diaryPassword
-        );
+      // Falls eine Wallet da ist, werden auch alte Einträge ohne Index gefunden.
+      await WalletService.tryConnect();
 
-      const loadedEntries = result.entries;
+      const result = await BlockchainService.loadEntries(diaryPassword);
 
-      if (
-        result.found > 0 &&
-        loadedEntries.length === 0
-      ) {
-        setWalletStatus(
+      if (result.found > 0 && result.entries.length === 0) {
+        setStatus(
           `${result.found} Einträge gefunden, aber keiner ließ sich entschlüsseln – stimmt das Passwort?`
         );
         return;
       }
 
-      const mergedEntries =
-        DiaryService.mergeWithChain(
-          loadedEntries,
-          entries
-        );
+      const merged = DiaryService.mergeWithChain(result.entries, entries);
 
-      setEntries(mergedEntries);
-
-      if (mergedEntries.length > 0) {
-        const firstEntry = mergedEntries[0];
-
-        setSelectedEntry(firstEntry);
-        setEditingText(firstEntry.text);
-        setEditingPhoto(
-          firstEntry.photo ?? null
-        );
-      } else {
-        setSelectedEntry(null);
-        setEditingText("");
-        setEditingPhoto(null);
-      }
+      setEntries(merged);
+      openEntry(null);
 
       const skipped =
         result.undecryptable > 0
           ? ` (${result.undecryptable} mit anderem Passwort übersprungen)`
           : "";
 
-      setWalletStatus(
-        `${loadedEntries.length} Eintrag/Einträge von BSV geladen ✅${skipped}`
+      setStatus(
+        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}`
       );
     } catch (error) {
-      console.error(
-        "BSV-Laden fehlgeschlagen:",
-        error
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
-      setWalletStatus(
-        `BSV-Laden fehlgeschlagen: ${message}`
-      );
+      console.error("BSV-Laden fehlgeschlagen:", error);
+      setStatus(`BSV-Laden fehlgeschlagen: ${errorText(error)}`);
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div
-      style={{
-        padding: 40,
-        fontFamily: "Arial",
-        width: "100%",
-        boxSizing: "border-box",
-        textAlign: "left",
-      }}
-    >
-      <Header title="Diary of Peter" />
+    <div className="app">
+      <header className="topbar">
+        <h1>Diary of Peter</h1>
 
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          marginBottom: 12,
-        }}
-      >
-        <button onClick={connectWallet}>
-          BSV Wallet verbinden
-        </button>
-
-        <button onClick={loadDiaryActions}>
-          BSV-Aktionen suchen
-        </button>
-
-        <button onClick={saveSelectedEntryToBsv}>
-          Ausgewählten Eintrag auf BSV speichern
-        </button>
-
-        <button onClick={loadEntriesFromBsv}>
-          Einträge von BSV laden
-        </button>
-      </div>
-
-      <input
-        type="password"
-        value={diaryPassword}
-        onChange={(event) =>
-          setDiaryPassword(event.target.value)
-        }
-        placeholder="Tagebuch-Passwort"
-        autoComplete="off"
-        style={{
-          display: "block",
-          width: 300,
-          maxWidth: "100%",
-          padding: 8,
-          marginBottom: 8,
-          boxSizing: "border-box",
-        }}
-      />
-
-      <p>{walletStatus}</p>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 20,
-          alignItems: "flex-start",
-        }}
-      >
-        <Sidebar
-          entries={entries}
-          selectedEntry={selectedEntry}
-          onSelect={selectEntry}
-        />
-
-        <main
-          style={{
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          <h2>Neuer Eintrag</h2>
-
-          <textarea
-            value={text}
-            onChange={(event) =>
-              setText(event.target.value)
-            }
-            placeholder="Schreibe einen neuen privaten Eintrag..."
-            rows={6}
-            style={{
-              width: "100%",
-              padding: 10,
-              fontSize: 16,
-              boxSizing: "border-box",
-            }}
+        <div className="topbar-actions">
+          <input
+            type="password"
+            value={diaryPassword}
+            onChange={(event) => setDiaryPassword(event.target.value)}
+            placeholder="Tagebuch-Passwort"
+            autoComplete="current-password"
           />
 
-          <div
-            style={{
-              marginTop: 12,
-            }}
-          >
-            <label>
-              Foto hinzufügen:
-              <br />
-
-              <input
-                ref={newPhotoInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
-                onChange={(event) => {
-                  void preparePhoto(
-                    event.target.files?.[0],
-                    "new"
-                  );
-                }}
-                style={{
-                  marginTop: 6,
-                }}
-              />
-            </label>
-          </div>
-
-          {newPhoto && (
-            <PhotoPreview
-              photo={newPhoto}
-              onRemove={() => {
-                setNewPhoto(null);
-
-                if (newPhotoInputRef.current) {
-                  newPhotoInputRef.current.value =
-                    "";
-                }
-              }}
-            />
-          )}
-
-          <button
-            onClick={saveEntry}
-            style={{
-              marginTop: 14,
-            }}
-          >
-            Eintrag lokal speichern
+          <button type="button" onClick={loadFromBsv} disabled={busy}>
+            Von BSV laden
           </button>
 
-          <hr
-            style={{
-              margin: "30px 0",
-            }}
+          <button
+            type="button"
+            className="primary"
+            onClick={uploadUnsynced}
+            disabled={busy || unsyncedEntries.length === 0}
+          >
+            {unsyncedEntries.length > 0
+              ? `Auf BSV speichern (${unsyncedEntries.length})`
+              : "Alles auf BSV ✓"}
+          </button>
+        </div>
+
+        {status && <p className="status">{status}</p>}
+      </header>
+
+      <div className="layout">
+        <Sidebar
+          entries={entries}
+          selectedId={selectedId}
+          onSelect={openEntry}
+          onNew={() => openEntry(null)}
+        />
+
+        <main className="editor" ref={editorRef}>
+          <h2>{selectedEntry ? "Eintrag bearbeiten" : "Neuer Eintrag"}</h2>
+
+          {selectedEntry && (
+            <p className="meta">
+              Erstellt: {selectedEntry.createdAt}
+              {selectedEntry.updatedAt &&
+                ` · Bearbeitet: ${selectedEntry.updatedAt}`}
+              {" · "}
+              {selectedEntry.synced ? "auf BSV ✓" : "noch nicht auf BSV"}
+            </p>
+          )}
+
+          <textarea
+            value={editorText}
+            onChange={(event) => setEditorText(event.target.value)}
+            placeholder="Was ist heute passiert?"
+            rows={12}
           />
 
-          {selectedEntry ? (
-            <section>
-              <h2>Eintrag bearbeiten</h2>
+          <label className="photo-input">
+            {editorPhoto ? "Foto ersetzen:" : "Foto hinzufügen:"}
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+              onChange={(event) => {
+                void preparePhoto(event.target.files?.[0]);
+              }}
+            />
+          </label>
 
-              <small>
-                Erstellt: {selectedEntry.createdAt}
-
-                {selectedEntry.updatedAt && (
-                  <>
-                    {" "}
-                    · Bearbeitet:{" "}
-                    {selectedEntry.updatedAt}
-                  </>
-                )}
-              </small>
-
-              <br />
-              <br />
-
-              <textarea
-                value={editingText}
-                onChange={(event) =>
-                  setEditingText(
-                    event.target.value
-                  )
-                }
-                rows={12}
-                style={{
-                  width: "100%",
-                  padding: 10,
-                  fontSize: 16,
-                  boxSizing: "border-box",
-                }}
-              />
-
-              <div
-                style={{
-                  marginTop: 12,
-                }}
-              >
-                <label>
-                  Foto hinzufügen oder ersetzen:
-                  <br />
-
-                  <input
-                    ref={editingPhotoInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
-                    onChange={(event) => {
-                      void preparePhoto(
-                        event.target.files?.[0],
-                        "editing"
-                      );
-                    }}
-                    style={{
-                      marginTop: 6,
-                    }}
-                  />
-                </label>
-              </div>
-
-              {editingPhoto && (
-                <PhotoPreview
-                  photo={editingPhoto}
-                  onRemove={() => {
-                    setEditingPhoto(null);
-
-                    if (
-                      editingPhotoInputRef.current
-                    ) {
-                      editingPhotoInputRef.current.value =
-                        "";
-                    }
+          {editorPhoto && (
+            <figure className="photo-preview">
+              <img src={editorPhoto.dataUrl} alt={editorPhoto.name} />
+              <figcaption>
+                {editorPhoto.name}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => {
+                    setEditorPhoto(null);
+                    resetPhotoInput();
                   }}
-                />
-              )}
-
-              <button
-                onClick={saveSelectedEntry}
-                style={{
-                  marginTop: 14,
-                }}
-              >
-                Änderungen lokal speichern
-              </button>
-            </section>
-          ) : (
-            <p>Kein Eintrag ausgewählt.</p>
+                >
+                  entfernen
+                </button>
+              </figcaption>
+            </figure>
           )}
+
+          <div className="editor-actions">
+            <button type="button" className="primary" onClick={saveLocally}>
+              {selectedEntry ? "Änderungen speichern" : "Eintrag speichern"}
+            </button>
+            <span className="hint">
+              Wird zuerst nur hier gespeichert. Mit „auf BSV speichern“ oben
+              kommen alle neuen Einträge gesammelt auf die Chain.
+            </span>
+          </div>
         </main>
       </div>
     </div>

@@ -98,9 +98,11 @@ class DiaryService {
     return updatedEntries;
   }
 
-  markSynced(id: string, entries: Entry[]): Entry[] {
+  markSynced(ids: string[], entries: Entry[]): Entry[] {
+    const idSet = new Set(ids);
+
     const updatedEntries = entries.map((entry) =>
-      entry.id === id ? { ...entry, synced: true } : entry
+      idSet.has(entry.id) ? { ...entry, synced: true } : entry
     );
 
     this.save(updatedEntries);
