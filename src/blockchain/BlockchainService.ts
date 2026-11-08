@@ -13,11 +13,15 @@ type DecryptedEntryContent = {
   photo?: EntryPhoto;
   /** Tagebuch – liegt verschlüsselt im Eintrag, damit auch die Namen privat bleiben */
   diary?: Diary;
+  /** Grabstein: Eintrag wurde gelöscht */
+  deleted?: boolean;
 };
 
 /** Ein gefundener Eintrag samt Infos, welche Version die neueste ist */
 type FoundEntry = {
   entry: Entry;
+  diary?: Diary;
+  deleted: boolean;
   savedAt: number;
   height: number;
   order: number;
@@ -119,11 +123,13 @@ class BlockchainService {
     diary: Diary | undefined,
     password: string
   ): Promise<string> {
-    const content: DecryptedEntryContent = {
-      text: entry.text,
-      ...(entry.photo ? { photo: entry.photo } : {}),
-      ...(diary ? { diary: { id: diary.id, name: diary.name } } : {}),
-    };
+    const content: DecryptedEntryContent = entry.deleted
+      ? { text: "", deleted: true }
+      : {
+          text: entry.text,
+          ...(entry.photo ? { photo: entry.photo } : {}),
+          ...(diary ? { diary: { id: diary.id, name: diary.name } } : {}),
+        };
 
     const encrypted =
       await EncryptionService.encrypt(
@@ -262,9 +268,6 @@ class BlockchainService {
       const content =
         this.parseDecryptedContent(decrypted);
 
-      if (content.diary) {
-        diariesById.set(content.diary.id, content.diary);
-      }
 
       const candidate: FoundEntry = {
         entry: {
@@ -282,7 +285,10 @@ class BlockchainService {
             : {}),
 
           synced: true,
+          onChain: true,
         },
+        ...(content.diary ? { diary: content.diary } : {}),
+        deleted: content.deleted === true,
         savedAt: pdp.entry.savedAt ?? 0,
         // Unbestätigt (0) gilt als neuestes
         height: height === 0 ? Number.MAX_SAFE_INTEGER : height,
@@ -299,9 +305,31 @@ class BlockchainService {
       }
     }
 
-    const entries = Array.from(entriesById.values())
-      .sort((a, b) => (this.isNewer(a, b) ? -1 : 1))
-      .map((item) => item.entry);
+    // Gelöschte (Grabsteine) fallen weg
+    const newest = Array.from(entriesById.values())
+      .filter((item) => !item.deleted)
+      .sort((a, b) => (this.isNewer(a, b) ? -1 : 1));
+
+    const entries = newest.map((item) => item.entry);
+
+    // Tagebuch-Namen: der zuletzt gespeicherte gewinnt
+    const diaryVersions = new Map<string, FoundEntry>();
+
+    for (const item of newest) {
+      if (!item.diary) {
+        continue;
+      }
+
+      const existing = diaryVersions.get(item.diary.id);
+
+      if (!existing || this.isNewer(item, existing)) {
+        diaryVersions.set(item.diary.id, item);
+      }
+    }
+
+    for (const [id, item] of diaryVersions) {
+      diariesById.set(id, item.diary as Diary);
+    }
 
     return {
       entries,
@@ -365,6 +393,8 @@ class BlockchainService {
 
         return {
           text: (parsed as any).text,
+
+          ...((parsed as any).deleted === true ? { deleted: true } : {}),
 
           ...(typeof diary?.id === "string" &&
           typeof diary?.name === "string"

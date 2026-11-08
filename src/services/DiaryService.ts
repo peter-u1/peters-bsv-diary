@@ -43,18 +43,90 @@ class DiaryService {
     return updated;
   }
 
-  /** Nimmt Tagebücher auf, die von der Chain kamen und lokal fehlen. */
-  mergeDiaries(found: Diary[], diaries: Diary[]): Diary[] {
-    const known = new Set(diaries.map((diary) => diary.id));
+  /**
+   * Übernimmt Tagebücher von der Chain: fehlende werden ergänzt (sofern
+   * sie sichtbare Einträge haben), Namen werden aktualisiert, solange
+   * lokal keine nicht hochgeladenen Änderungen in dem Tagebuch liegen.
+   */
+  mergeDiaries(
+    found: Diary[],
+    diaries: Diary[],
+    entries: Entry[]
+  ): Diary[] {
+    const diaryOf = (entry: Entry) => entry.diaryId ?? DEFAULT_DIARY.id;
 
-    const updated = [
-      ...diaries,
-      ...found.filter((diary) => !known.has(diary.id)),
-    ];
+    const hasVisible = (id: string) =>
+      entries.some((entry) => diaryOf(entry) === id && !entry.deleted);
+
+    const hasPending = (id: string) =>
+      entries.some(
+        (entry) => diaryOf(entry) === id && entry.synced !== true
+      );
+
+    const foundById = new Map(found.map((diary) => [diary.id, diary]));
+
+    const updated = diaries.map((diary) => {
+      const remote = foundById.get(diary.id);
+
+      return remote && remote.name !== diary.name && !hasPending(diary.id)
+        ? { ...diary, name: remote.name }
+        : diary;
+    });
+
+    const known = new Set(updated.map((diary) => diary.id));
+
+    for (const diary of found) {
+      if (!known.has(diary.id) && hasVisible(diary.id)) {
+        updated.push(diary);
+      }
+    }
 
     this.saveDiaries(updated);
 
     return updated;
+  }
+
+  /** Benennt um; die Einträge werden zum erneuten Hochladen markiert. */
+  renameDiary(
+    id: string,
+    name: string,
+    diaries: Diary[],
+    entries: Entry[]
+  ): { diaries: Diary[]; entries: Entry[] } {
+    const updatedDiaries = diaries.map((diary) =>
+      diary.id === id ? { ...diary, name } : diary
+    );
+
+    const updatedEntries = entries.map((entry) =>
+      (entry.diaryId ?? DEFAULT_DIARY.id) === id && !entry.deleted
+        ? { ...entry, synced: false }
+        : entry
+    );
+
+    this.saveDiaries(updatedDiaries);
+    this.save(updatedEntries);
+
+    return { diaries: updatedDiaries, entries: updatedEntries };
+  }
+
+  /** Löscht ein Tagebuch samt Einträgen (auf der Chain per Grabstein). */
+  deleteDiary(
+    id: string,
+    diaries: Diary[],
+    entries: Entry[]
+  ): { diaries: Diary[]; entries: Entry[] } {
+    const updatedDiaries = diaries.filter((diary) => diary.id !== id);
+
+    const ids = entries
+      .filter((entry) => (entry.diaryId ?? DEFAULT_DIARY.id) === id)
+      .map((entry) => entry.id);
+
+    this.saveDiaries(updatedDiaries);
+
+    return {
+      diaries: updatedDiaries,
+      entries: this.deleteEntries(ids, entries),
+    };
   }
 
   loadActiveDiaryId(): string {
@@ -127,6 +199,7 @@ class DiaryService {
     const newEntry: Entry = {
       id: crypto.randomUUID(),
       diaryId,
+      onChain: false,
       text,
       createdAt: new Date().toLocaleString("de-AT"),
       ...(photo ? { photo } : {}),
@@ -179,12 +252,55 @@ class DiaryService {
     return updatedEntries;
   }
 
+  /**
+   * Löscht Einträge. Was nie auf der Chain war, verschwindet sofort;
+   * der Rest wird zum Grabstein, der beim nächsten Hochladen auf die
+   * Chain kommt und den Eintrag überall ausblendet.
+   */
+  deleteEntries(ids: string[], entries: Entry[]): Entry[] {
+    const idSet = new Set(ids);
+
+    const updatedEntries = entries.flatMap((entry): Entry[] => {
+      if (!idSet.has(entry.id)) {
+        return [entry];
+      }
+
+      if (entry.onChain === false) {
+        return [];
+      }
+
+      return [
+        {
+          id: entry.id,
+          diaryId: entry.diaryId,
+          text: "",
+          createdAt: entry.createdAt,
+          deleted: true,
+          synced: false,
+        },
+      ];
+    });
+
+    this.save(updatedEntries);
+
+    return updatedEntries;
+  }
+
   markSynced(ids: string[], entries: Entry[]): Entry[] {
     const idSet = new Set(ids);
 
-    const updatedEntries = entries.map((entry) =>
-      idSet.has(entry.id) ? { ...entry, synced: true } : entry
-    );
+    const updatedEntries = entries.flatMap((entry): Entry[] => {
+      if (!idSet.has(entry.id)) {
+        return [entry];
+      }
+
+      // Hochgeladener Grabstein: lokal nicht mehr nötig
+      if (entry.deleted) {
+        return [];
+      }
+
+      return [{ ...entry, synced: true, onChain: true }];
+    });
 
     this.save(updatedEntries);
 

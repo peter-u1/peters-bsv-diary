@@ -47,14 +47,25 @@
   vertical-align: middle;
 }
 
-.new-diary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 0 8px 6px;
+.tab-edit {
+  font-size: 13px;
+  margin-left: 8px;
+  opacity: 0.6;
 }
 
-.new-diary input {
+.tab-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -10px 0 20px;
+  padding: 12px;
+  background: var(--code-bg);
+  border-radius: 0 0 8px 8px;
+  font-size: 15px;
+}
+
+.tab-form input {
   padding: 8px 10px;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -78,21 +89,42 @@
   max-width: 300px;
 }
 
-.font-size {
+.view-settings {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-left: auto;
 }
 
-.font-size span {
-  min-width: 2ch;
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepper-label {
+  font-size: 13px;
+  margin-right: 2px;
+}
+
+.stepper-value {
+  min-width: 3ch;
   text-align: center;
   font-size: 14px;
 }
 
-.font-size button {
-  padding: 9px 11px;
+.stepper button {
+  padding: 7px 11px;
+}
+
+@media (max-width: 760px) {
+  .view-settings {
+    margin-left: 0;
+  }
+
+  .hide-mobile {
+    display: none;
+  }
 }
 
 .status {
@@ -137,6 +169,26 @@ button.primary {
   color: #fff;
 }
 
+button.danger {
+  background: #c43c3c;
+  border-color: #c43c3c;
+  color: #fff;
+}
+
+button.danger-outline {
+  background: transparent;
+  border-color: #c43c3c;
+  color: #c43c3c;
+}
+
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+
 button.link {
   border: none;
   background: none;
@@ -154,8 +206,7 @@ button.link {
 }
 
 .sidebar {
-  flex: 0 0 44%;
-  max-width: 600px;
+  flex: 0 0 var(--list-width, 44%);
 }
 
 .editor {

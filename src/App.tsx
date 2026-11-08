@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type React from "react";
 
 import Sidebar from "./components/Sidebar";
+import Stepper from "./components/Stepper";
 
 import { DEFAULT_DIARY } from "./types/Entry";
 import type { Diary, Entry, EntryPhoto } from "./types/Entry";
@@ -14,34 +15,63 @@ import BlockchainService from "./blockchain/BlockchainService";
 
 import "./App.css";
 
-const FONT_SIZE_KEY = "diary_font_size";
-const FONT_SIZE_DEFAULT = 17;
-const FONT_SIZE_MIN = 13;
-const FONT_SIZE_MAX = 28;
+/* ---------- Anzeige-Einstellungen (pro Gerät gespeichert) ---------- */
 
-const loadFontSize = () => {
+const FONT_SIZE = { key: "diary_font_size", min: 13, max: 28, step: 1, initial: 17 };
+const LIST_WIDTH = { key: "diary_list_width", min: 25, max: 70, step: 5, initial: 44 };
+
+type Setting = typeof FONT_SIZE;
+
+const loadSetting = (setting: Setting) => {
   try {
-    const stored = Number(localStorage.getItem(FONT_SIZE_KEY));
+    const stored = Number(localStorage.getItem(setting.key));
 
-    if (stored >= FONT_SIZE_MIN && stored <= FONT_SIZE_MAX) {
+    if (stored >= setting.min && stored <= setting.max) {
       return stored;
     }
   } catch {
     // Speicher nicht verfügbar – Standard nehmen
   }
 
-  return FONT_SIZE_DEFAULT;
+  return setting.initial;
+};
+
+const useSetting = (setting: Setting) => {
+  const [value, setValue] = useState(() => loadSetting(setting));
+
+  const change = (direction: 1 | -1) => {
+    setValue((current) => {
+      const next = Math.min(
+        setting.max,
+        Math.max(setting.min, current + direction * setting.step)
+      );
+
+      try {
+        localStorage.setItem(setting.key, String(next));
+      } catch {
+        // ignorieren
+      }
+
+      return next;
+    });
+  };
+
+  return [value, change] as const;
 };
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+const diaryOf = (entry: Entry) => entry.diaryId ?? DEFAULT_DIARY.id;
 
 function App() {
   const [diaryPassword, setDiaryPassword] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  const [fontSize, setFontSize] = useState(loadFontSize);
+
+  const [fontSize, changeFontSize] = useSetting(FONT_SIZE);
+  const [listWidth, changeListWidth] = useSetting(LIST_WIDTH);
 
   const [diaries, setDiaries] = useState<Diary[]>(() =>
     DiaryService.loadDiaries()
@@ -49,7 +79,12 @@ function App() {
   const [activeDiaryId, setActiveDiaryId] = useState(() =>
     DiaryService.loadActiveDiaryId()
   );
+
+  // Formulare in der Reiterleiste
   const [newDiaryName, setNewDiaryName] = useState<string | null>(null);
+  const [manageName, setManageName] = useState<string | null>(null);
+  const [confirmDiaryDelete, setConfirmDiaryDelete] = useState(false);
+  const [confirmEntryDelete, setConfirmEntryDelete] = useState(false);
 
   // null = neuer Eintrag
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -60,6 +95,10 @@ function App() {
   const editorRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  useEffect(() => {
+    setEntries(DiaryService.load());
+  }, []);
+
   // Textfeld wächst mit dem Text mit, damit man alles ohne Scrollen liest.
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -68,44 +107,20 @@ function App() {
       textarea.style.height = "auto";
       textarea.style.height = `${textarea.scrollHeight + 2}px`;
     }
-  }, [editorText, selectedId, fontSize]);
-
-  useEffect(() => {
-    setEntries(DiaryService.load());
-  }, []);
-
-  const changeFontSize = (delta: number) => {
-    setFontSize((current) => {
-      const next = Math.min(
-        FONT_SIZE_MAX,
-        Math.max(FONT_SIZE_MIN, current + delta)
-      );
-
-      try {
-        localStorage.setItem(FONT_SIZE_KEY, String(next));
-      } catch {
-        // ignorieren
-      }
-
-      return next;
-    });
-  };
+  }, [editorText, selectedId, fontSize, listWidth]);
 
   const activeDiary =
     diaries.find((diary) => diary.id === activeDiaryId) ?? DEFAULT_DIARY;
 
-  const diaryOf = (entry: Entry) => entry.diaryId ?? DEFAULT_DIARY.id;
-
   const visibleEntries = entries.filter(
-    (entry) => diaryOf(entry) === activeDiary.id
+    (entry) => diaryOf(entry) === activeDiary.id && !entry.deleted
   );
 
   const selectedEntry =
     visibleEntries.find((entry) => entry.id === selectedId) ?? null;
 
-  const unsyncedEntries = entries.filter(
-    (entry) => entry.synced !== true
-  );
+  // Enthält auch Löschungen und Umbenennungen, die noch hoch müssen
+  const unsyncedEntries = entries.filter((entry) => entry.synced !== true);
 
   const resetPhotoInput = () => {
     if (photoInputRef.current) {
@@ -117,17 +132,27 @@ function App() {
     setSelectedId(entry?.id ?? null);
     setEditorText(entry?.text ?? "");
     setEditorPhoto(entry?.photo ?? null);
+    setConfirmEntryDelete(false);
     resetPhotoInput();
 
     // Am Handy steht die Liste unter dem Editor: nach oben scrollen.
-    if (window.innerWidth <= 760) {
+    if (entry && window.innerWidth <= 760) {
       editorRef.current?.scrollIntoView({ behavior: "smooth" });
     }
+  };
+
+  /* ---------- Tagebücher ---------- */
+
+  const closeDiaryForms = () => {
+    setNewDiaryName(null);
+    setManageName(null);
+    setConfirmDiaryDelete(false);
   };
 
   const switchDiary = (id: string) => {
     setActiveDiaryId(id);
     DiaryService.saveActiveDiaryId(id);
+    closeDiaryForms();
     openEntry(null);
   };
 
@@ -142,10 +167,65 @@ function App() {
     const updated = DiaryService.addDiary(name, diaries);
 
     setDiaries(updated);
-    setNewDiaryName(null);
     switchDiary(updated[updated.length - 1].id);
     setStatus(`Tagebuch „${name}“ angelegt ✅`);
   };
+
+  const renameDiary = () => {
+    const name = (manageName ?? "").trim();
+
+    if (!name || name === activeDiary.name) {
+      closeDiaryForms();
+      return;
+    }
+
+    const result = DiaryService.renameDiary(
+      activeDiary.id,
+      name,
+      diaries,
+      entries
+    );
+
+    setDiaries(result.diaries);
+    setEntries(result.entries);
+    closeDiaryForms();
+
+    const count = result.entries.filter(
+      (entry) => diaryOf(entry) === activeDiary.id && !entry.deleted
+    ).length;
+
+    setStatus(
+      count > 0
+        ? `Umbenannt in „${name}“ ✅ – mit „Auf BSV speichern“ kommt der neue Name auch auf die Chain.`
+        : `Umbenannt in „${name}“ ✅`
+    );
+  };
+
+  const deleteDiary = () => {
+    const name = activeDiary.name;
+
+    const result = DiaryService.deleteDiary(
+      activeDiary.id,
+      diaries,
+      entries
+    );
+
+    setDiaries(result.diaries);
+    setEntries(result.entries);
+    switchDiary(DEFAULT_DIARY.id);
+
+    const pending = result.entries.some(
+      (entry) => entry.deleted && entry.synced !== true
+    );
+
+    setStatus(
+      pending
+        ? `Tagebuch „${name}“ gelöscht – mit „Auf BSV speichern“ verschwinden die Einträge auch beim Laden von der Chain.`
+        : `Tagebuch „${name}“ gelöscht ✅`
+    );
+  };
+
+  /* ---------- Einträge ---------- */
 
   const preparePhoto = async (file: File | undefined) => {
     if (!file) {
@@ -170,24 +250,24 @@ function App() {
 
     try {
       if (selectedEntry) {
-        const updated = DiaryService.update(
-          selectedEntry.id,
-          editorText.trim(),
-          entries,
-          editorPhoto
+        setEntries(
+          DiaryService.update(
+            selectedEntry.id,
+            editorText.trim(),
+            entries,
+            editorPhoto
+          )
         );
-
-        setEntries(updated);
         setStatus("Änderungen lokal gespeichert ✅ – noch nicht auf BSV.");
       } else {
-        const updated = DiaryService.create(
-          editorText.trim(),
-          entries,
-          editorPhoto ?? undefined,
-          activeDiary.id
+        setEntries(
+          DiaryService.create(
+            editorText.trim(),
+            entries,
+            editorPhoto ?? undefined,
+            activeDiary.id
+          )
         );
-
-        setEntries(updated);
         openEntry(null);
         setStatus("Eintrag lokal gespeichert ✅ – noch nicht auf BSV.");
       }
@@ -198,6 +278,25 @@ function App() {
       );
     }
   };
+
+  const deleteEntry = () => {
+    if (!selectedEntry) {
+      return;
+    }
+
+    const wasOnChain = selectedEntry.onChain !== false;
+
+    setEntries(DiaryService.deleteEntries([selectedEntry.id], entries));
+    openEntry(null);
+
+    setStatus(
+      wasOnChain
+        ? "Eintrag gelöscht – mit „Auf BSV speichern“ verschwindet er auch beim Laden von der Chain."
+        : "Eintrag gelöscht ✅"
+    );
+  };
+
+  /* ---------- BSV ---------- */
 
   const uploadUnsynced = async () => {
     if (!diaryPassword.trim()) {
@@ -219,7 +318,7 @@ function App() {
       }
 
       setStatus(
-        `Verschlüssele ${unsyncedEntries.length} Eintrag/Einträge und speichere auf BSV...`
+        `Verschlüssele ${unsyncedEntries.length} Änderung(en) und speichere auf BSV...`
       );
 
       let current = entries;
@@ -233,14 +332,12 @@ function App() {
           setEntries(current);
 
           if (batches > 1) {
-            setStatus(
-              `Transaktion ${batch} von ${batches} gespeichert...`
-            );
+            setStatus(`Transaktion ${batch} von ${batches} gespeichert...`);
           }
         }
       );
 
-      setStatus(`${saved} Eintrag/Einträge verschlüsselt auf BSV gespeichert ✅`);
+      setStatus(`${saved} Änderung(en) verschlüsselt auf BSV gespeichert ✅`);
     } catch (error) {
       console.error("BSV-Speichern fehlgeschlagen:", error);
       setStatus(`BSV-Speichern fehlgeschlagen: ${errorText(error)}`);
@@ -265,7 +362,7 @@ function App() {
 
       const result = await BlockchainService.loadEntries(diaryPassword);
 
-      if (result.found > 0 && result.entries.length === 0) {
+      if (result.found > 0 && result.entries.length === 0 && result.undecryptable > 0) {
         setStatus(
           `${result.found} Einträge gefunden, aber keiner ließ sich entschlüsseln – stimmt das Passwort?`
         );
@@ -274,9 +371,8 @@ function App() {
 
       const merged = DiaryService.mergeWithChain(result.entries, entries);
 
-      setDiaries(DiaryService.mergeDiaries(result.diaries, diaries));
-
       setEntries(merged);
+      setDiaries(DiaryService.mergeDiaries(result.diaries, diaries, merged));
       openEntry(null);
 
       const skipped =
@@ -295,10 +391,17 @@ function App() {
     }
   };
 
+  /* ---------- Oberfläche ---------- */
+
   return (
     <div
       className="app"
-      style={{ "--entry-size": `${fontSize}px` } as React.CSSProperties}
+      style={
+        {
+          "--entry-size": `${fontSize}px`,
+          "--list-width": `${listWidth}%`,
+        } as React.CSSProperties
+      }
     >
       <header className="topbar">
         <h1>Diary of Peter</h1>
@@ -327,24 +430,22 @@ function App() {
               : "Alles auf BSV ✓"}
           </button>
 
-          <div className="font-size" title="Schriftgröße der Einträge">
-            <button
-              type="button"
-              onClick={() => changeFontSize(-1)}
-              disabled={fontSize <= FONT_SIZE_MIN}
-              aria-label="Schrift kleiner"
-            >
-              A−
-            </button>
-            <span>{fontSize}</span>
-            <button
-              type="button"
-              onClick={() => changeFontSize(1)}
-              disabled={fontSize >= FONT_SIZE_MAX}
-              aria-label="Schrift größer"
-            >
-              A+
-            </button>
+          <div className="view-settings">
+            <Stepper
+              label="Schrift"
+              value={fontSize}
+              onChange={changeFontSize}
+              canDecrease={fontSize > FONT_SIZE.min}
+              canIncrease={fontSize < FONT_SIZE.max}
+            />
+            <Stepper
+              label="Liste"
+              className="hide-mobile"
+              value={`${listWidth}%`}
+              onChange={changeListWidth}
+              canDecrease={listWidth > LIST_WIDTH.min}
+              canIncrease={listWidth < LIST_WIDTH.max}
+            />
           </div>
         </div>
 
@@ -354,61 +455,122 @@ function App() {
       <nav className="tabs">
         {diaries.map((diary) => {
           const unsynced = entries.filter(
-            (entry) =>
-              diaryOf(entry) === diary.id && entry.synced !== true
+            (entry) => diaryOf(entry) === diary.id && entry.synced !== true
           ).length;
+
+          const active = diary.id === activeDiary.id;
 
           return (
             <button
               key={diary.id}
               type="button"
-              className={diary.id === activeDiary.id ? "tab active" : "tab"}
-              onClick={() => switchDiary(diary.id)}
+              className={active ? "tab active" : "tab"}
+              onClick={() =>
+                active
+                  ? manageName === null
+                    ? setManageName(diary.name)
+                    : closeDiaryForms()
+                  : switchDiary(diary.id)
+              }
+              title={active ? "Umbenennen oder löschen" : undefined}
             >
               {diary.name}
               {unsynced > 0 && <span className="tab-dot">●</span>}
+              {active && <span className="tab-edit">✎</span>}
             </button>
           );
         })}
 
-        {newDiaryName === null ? (
-          <button
-            type="button"
-            className="tab add"
-            onClick={() => setNewDiaryName("")}
-            title="Neues Tagebuch"
-          >
-            +
-          </button>
-        ) : (
-          <form
-            className="new-diary"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createDiary();
-            }}
-          >
-            <input
-              autoFocus
-              value={newDiaryName}
-              onChange={(event) => setNewDiaryName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setNewDiaryName(null);
-                }
-              }}
-              placeholder="z. B. Arbeit, Hobby…"
-              maxLength={40}
-            />
-            <button type="submit" className="primary">
-              Anlegen
-            </button>
-            <button type="button" onClick={() => setNewDiaryName(null)}>
-              Abbrechen
-            </button>
-          </form>
-        )}
+        <button
+          type="button"
+          className="tab add"
+          onClick={() => {
+            closeDiaryForms();
+            setNewDiaryName("");
+          }}
+          title="Neues Tagebuch"
+        >
+          +
+        </button>
       </nav>
+
+      {newDiaryName !== null && (
+        <form
+          className="tab-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createDiary();
+          }}
+        >
+          <span>Neues Tagebuch:</span>
+          <input
+            autoFocus
+            value={newDiaryName}
+            onChange={(event) => setNewDiaryName(event.target.value)}
+            onKeyDown={(event) => event.key === "Escape" && closeDiaryForms()}
+            placeholder="z. B. Arbeit, Hobby…"
+            maxLength={40}
+          />
+          <button type="submit" className="primary">
+            Anlegen
+          </button>
+          <button type="button" onClick={closeDiaryForms}>
+            Abbrechen
+          </button>
+        </form>
+      )}
+
+      {manageName !== null && (
+        <form
+          className="tab-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            renameDiary();
+          }}
+        >
+          <span>Name:</span>
+          <input
+            autoFocus
+            value={manageName}
+            onChange={(event) => setManageName(event.target.value)}
+            onKeyDown={(event) => event.key === "Escape" && closeDiaryForms()}
+            maxLength={40}
+          />
+          <button type="submit" className="primary">
+            Umbenennen
+          </button>
+
+          {activeDiary.id !== DEFAULT_DIARY.id &&
+            (confirmDiaryDelete ? (
+              <span className="confirm">
+                „{activeDiary.name}“
+                {visibleEntries.length > 0 &&
+                  ` mit ${visibleEntries.length} ${
+                    visibleEntries.length === 1 ? "Eintrag" : "Einträgen"
+                  }`}{" "}
+                löschen?
+                <button type="button" className="danger" onClick={deleteDiary}>
+                  Ja, löschen
+                </button>
+                <button type="button" onClick={() => setConfirmDiaryDelete(false)}>
+                  Nein
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="danger-outline"
+                onClick={() => setConfirmDiaryDelete(true)}
+              >
+                Tagebuch löschen
+              </button>
+            ))}
+
+          <button type="button" onClick={closeDiaryForms}>
+            Schließen
+          </button>
+        </form>
+      )}
 
       <div className="layout">
         <Sidebar
@@ -479,9 +641,31 @@ function App() {
             <button type="button" className="primary" onClick={saveLocally}>
               {selectedEntry ? "Änderungen speichern" : "Eintrag speichern"}
             </button>
+
+            {selectedEntry &&
+              (confirmEntryDelete ? (
+                <span className="confirm">
+                  Eintrag wirklich löschen?
+                  <button type="button" className="danger" onClick={deleteEntry}>
+                    Ja, löschen
+                  </button>
+                  <button type="button" onClick={() => setConfirmEntryDelete(false)}>
+                    Nein
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="danger-outline"
+                  onClick={() => setConfirmEntryDelete(true)}
+                >
+                  Löschen
+                </button>
+              ))}
+
             <span className="hint">
-              Wird zuerst nur hier gespeichert. Mit „auf BSV speichern“ oben
-              kommen alle neuen Einträge gesammelt auf die Chain.
+              Wird zuerst nur hier gespeichert. Mit „Auf BSV speichern“ oben
+              kommen alle Änderungen gesammelt auf die Chain.
             </span>
           </div>
         </main>

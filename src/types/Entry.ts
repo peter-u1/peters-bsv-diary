@@ -21,6 +21,11 @@ export type Entry = {
   text: string;
   createdAt: string;
   updatedAt?: string;
+  /** true = aktueller Stand ist auf der Chain */
   synced?: boolean;
+  /** false = war noch nie auf der Chain (fehlt = unbekannt) */
+  onChain?: boolean;
+  /** Gelöscht – wird als "Grabstein" hochgeladen, damit er überall verschwindet */
+  deleted?: boolean;
   photo?: EntryPhoto;
 };
