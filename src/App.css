@@ -6,9 +6,59 @@
 /* ---------- Kopfzeile ---------- */
 
 .topbar {
-  border-bottom: 1px solid var(--border);
   padding-bottom: 16px;
+}
+
+/* ---------- Reiter ---------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 20px;
+}
+
+.tab {
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  margin-bottom: -1px;
+  padding: 9px 16px;
+}
+
+.tab.active {
+  background: var(--bg);
+  border-color: var(--border);
+  border-bottom: 1px solid var(--bg);
+  font-weight: 600;
+}
+
+.tab.add {
+  font-weight: 600;
+  min-width: 42px;
+}
+
+.tab-dot {
+  color: #d9822b;
+  font-size: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.new-diary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 8px 6px;
+}
+
+.new-diary input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  width: 200px;
 }
 
 .topbar h1 {

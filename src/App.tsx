@@ -3,7 +3,8 @@ import type React from "react";
 
 import Sidebar from "./components/Sidebar";
 
-import type { Entry, EntryPhoto } from "./types/Entry";
+import { DEFAULT_DIARY } from "./types/Entry";
+import type { Diary, Entry, EntryPhoto } from "./types/Entry";
 
 import DiaryService from "./services/DiaryService";
 import PhotoService from "./services/PhotoService";
@@ -41,6 +42,14 @@ function App() {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [fontSize, setFontSize] = useState(loadFontSize);
+
+  const [diaries, setDiaries] = useState<Diary[]>(() =>
+    DiaryService.loadDiaries()
+  );
+  const [activeDiaryId, setActiveDiaryId] = useState(() =>
+    DiaryService.loadActiveDiaryId()
+  );
+  const [newDiaryName, setNewDiaryName] = useState<string | null>(null);
 
   // null = neuer Eintrag
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -82,8 +91,17 @@ function App() {
     });
   };
 
+  const activeDiary =
+    diaries.find((diary) => diary.id === activeDiaryId) ?? DEFAULT_DIARY;
+
+  const diaryOf = (entry: Entry) => entry.diaryId ?? DEFAULT_DIARY.id;
+
+  const visibleEntries = entries.filter(
+    (entry) => diaryOf(entry) === activeDiary.id
+  );
+
   const selectedEntry =
-    entries.find((entry) => entry.id === selectedId) ?? null;
+    visibleEntries.find((entry) => entry.id === selectedId) ?? null;
 
   const unsyncedEntries = entries.filter(
     (entry) => entry.synced !== true
@@ -105,6 +123,28 @@ function App() {
     if (window.innerWidth <= 760) {
       editorRef.current?.scrollIntoView({ behavior: "smooth" });
     }
+  };
+
+  const switchDiary = (id: string) => {
+    setActiveDiaryId(id);
+    DiaryService.saveActiveDiaryId(id);
+    openEntry(null);
+  };
+
+  const createDiary = () => {
+    const name = (newDiaryName ?? "").trim();
+
+    if (!name) {
+      setNewDiaryName(null);
+      return;
+    }
+
+    const updated = DiaryService.addDiary(name, diaries);
+
+    setDiaries(updated);
+    setNewDiaryName(null);
+    switchDiary(updated[updated.length - 1].id);
+    setStatus(`Tagebuch „${name}“ angelegt ✅`);
   };
 
   const preparePhoto = async (file: File | undefined) => {
@@ -143,7 +183,8 @@ function App() {
         const updated = DiaryService.create(
           editorText.trim(),
           entries,
-          editorPhoto ?? undefined
+          editorPhoto ?? undefined,
+          activeDiary.id
         );
 
         setEntries(updated);
@@ -185,6 +226,7 @@ function App() {
 
       const saved = await BlockchainService.saveMany(
         unsyncedEntries,
+        diaries,
         diaryPassword,
         (savedIds, batch, batches) => {
           current = DiaryService.markSynced(savedIds, current);
@@ -231,6 +273,8 @@ function App() {
       }
 
       const merged = DiaryService.mergeWithChain(result.entries, entries);
+
+      setDiaries(DiaryService.mergeDiaries(result.diaries, diaries));
 
       setEntries(merged);
       openEntry(null);
@@ -307,16 +351,79 @@ function App() {
         {status && <p className="status">{status}</p>}
       </header>
 
+      <nav className="tabs">
+        {diaries.map((diary) => {
+          const unsynced = entries.filter(
+            (entry) =>
+              diaryOf(entry) === diary.id && entry.synced !== true
+          ).length;
+
+          return (
+            <button
+              key={diary.id}
+              type="button"
+              className={diary.id === activeDiary.id ? "tab active" : "tab"}
+              onClick={() => switchDiary(diary.id)}
+            >
+              {diary.name}
+              {unsynced > 0 && <span className="tab-dot">●</span>}
+            </button>
+          );
+        })}
+
+        {newDiaryName === null ? (
+          <button
+            type="button"
+            className="tab add"
+            onClick={() => setNewDiaryName("")}
+            title="Neues Tagebuch"
+          >
+            +
+          </button>
+        ) : (
+          <form
+            className="new-diary"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createDiary();
+            }}
+          >
+            <input
+              autoFocus
+              value={newDiaryName}
+              onChange={(event) => setNewDiaryName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setNewDiaryName(null);
+                }
+              }}
+              placeholder="z. B. Arbeit, Hobby…"
+              maxLength={40}
+            />
+            <button type="submit" className="primary">
+              Anlegen
+            </button>
+            <button type="button" onClick={() => setNewDiaryName(null)}>
+              Abbrechen
+            </button>
+          </form>
+        )}
+      </nav>
+
       <div className="layout">
         <Sidebar
-          entries={entries}
+          entries={visibleEntries}
           selectedId={selectedId}
           onSelect={openEntry}
           onNew={() => openEntry(null)}
         />
 
         <main className="editor" ref={editorRef}>
-          <h2>{selectedEntry ? "Eintrag bearbeiten" : "Neuer Eintrag"}</h2>
+          <h2>
+            {selectedEntry
+              ? "Eintrag bearbeiten"
+              : `Neuer Eintrag in „${activeDiary.name}“`}
+          </h2>
 
           {selectedEntry && (
             <p className="meta">

@@ -1,11 +1,90 @@
+import { DEFAULT_DIARY } from "../types/Entry";
 import type {
+  Diary,
   Entry,
   EntryPhoto,
 } from "../types/Entry";
 
 const STORAGE_KEY = "diary_entries";
+const DIARIES_KEY = "diary_list";
+const ACTIVE_DIARY_KEY = "diary_active";
 
 class DiaryService {
+  /* ---------- Tagebücher (Reiter) ---------- */
+
+  loadDiaries(): Diary[] {
+    try {
+      const parsed: unknown = JSON.parse(
+        localStorage.getItem(DIARIES_KEY) ?? "[]"
+      );
+
+      const diaries = Array.isArray(parsed)
+        ? parsed.filter(
+            (diary): diary is Diary =>
+              typeof diary?.id === "string" &&
+              typeof diary?.name === "string"
+          )
+        : [];
+
+      return this.withDefault(diaries);
+    } catch {
+      return [DEFAULT_DIARY];
+    }
+  }
+
+  addDiary(name: string, diaries: Diary[]): Diary[] {
+    const updated = [
+      ...diaries,
+      { id: crypto.randomUUID(), name },
+    ];
+
+    this.saveDiaries(updated);
+
+    return updated;
+  }
+
+  /** Nimmt Tagebücher auf, die von der Chain kamen und lokal fehlen. */
+  mergeDiaries(found: Diary[], diaries: Diary[]): Diary[] {
+    const known = new Set(diaries.map((diary) => diary.id));
+
+    const updated = [
+      ...diaries,
+      ...found.filter((diary) => !known.has(diary.id)),
+    ];
+
+    this.saveDiaries(updated);
+
+    return updated;
+  }
+
+  loadActiveDiaryId(): string {
+    try {
+      return localStorage.getItem(ACTIVE_DIARY_KEY) ?? DEFAULT_DIARY.id;
+    } catch {
+      return DEFAULT_DIARY.id;
+    }
+  }
+
+  saveActiveDiaryId(id: string): void {
+    try {
+      localStorage.setItem(ACTIVE_DIARY_KEY, id);
+    } catch {
+      // ignorieren
+    }
+  }
+
+  private withDefault(diaries: Diary[]): Diary[] {
+    return diaries.some((diary) => diary.id === DEFAULT_DIARY.id)
+      ? diaries
+      : [DEFAULT_DIARY, ...diaries];
+  }
+
+  private saveDiaries(diaries: Diary[]): void {
+    localStorage.setItem(DIARIES_KEY, JSON.stringify(diaries));
+  }
+
+  /* ---------- Einträge ---------- */
+
   load(): Entry[] {
     try {
       const storedEntries =
@@ -42,10 +121,12 @@ class DiaryService {
   create(
     text: string,
     entries: Entry[],
-    photo?: EntryPhoto
+    photo: EntryPhoto | undefined,
+    diaryId: string
   ): Entry[] {
     const newEntry: Entry = {
       id: crypto.randomUUID(),
+      diaryId,
       text,
       createdAt: new Date().toLocaleString("de-AT"),
       ...(photo ? { photo } : {}),

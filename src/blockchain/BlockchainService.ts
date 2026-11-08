@@ -2,6 +2,7 @@ import WalletService from "./WalletService";
 import EncryptionService from "./EncryptionService";
 import ChainIndexService from "./ChainIndexService";
 import type {
+  Diary,
   Entry,
   EntryPhoto,
 } from "../types/Entry";
@@ -10,6 +11,8 @@ import type { PDPv1 } from "../types/PDP";
 type DecryptedEntryContent = {
   text: string;
   photo?: EntryPhoto;
+  /** Tagebuch – liegt verschlüsselt im Eintrag, damit auch die Namen privat bleiben */
+  diary?: Diary;
 };
 
 /** Ein gefundener Eintrag samt Infos, welche Version die neueste ist */
@@ -22,6 +25,8 @@ type FoundEntry = {
 
 export type LoadResult = {
   entries: Entry[];
+  /** Tagebücher, die in den Einträgen vorkommen */
+  diaries: Diary[];
   /** Tagebuch-Transaktionen, die gefunden wurden */
   found: number;
   /** Davon mit dem Passwort nicht entschlüsselbar */
@@ -40,6 +45,7 @@ class BlockchainService {
    */
   async saveMany(
     entries: Entry[],
+    diaries: Diary[],
     password: string,
     onSaved?: (savedIds: string[], batch: number, batches: number) => void
   ): Promise<number> {
@@ -52,7 +58,11 @@ class BlockchainService {
     for (const entry of entries) {
       prepared.push({
         id: entry.id,
-        payload: await this.buildPayload(entry, password),
+        payload: await this.buildPayload(
+          entry,
+          diaries.find((diary) => diary.id === entry.diaryId),
+          password
+        ),
       });
     }
 
@@ -106,11 +116,13 @@ class BlockchainService {
 
   private async buildPayload(
     entry: Entry,
+    diary: Diary | undefined,
     password: string
   ): Promise<string> {
     const content: DecryptedEntryContent = {
       text: entry.text,
       ...(entry.photo ? { photo: entry.photo } : {}),
+      ...(diary ? { diary: { id: diary.id, name: diary.name } } : {}),
     };
 
     const encrypted =
@@ -208,6 +220,7 @@ class BlockchainService {
     }
 
     const entriesById = new Map<string, FoundEntry>();
+    const diariesById = new Map<string, Diary>();
     let found = 0;
     let undecryptable = 0;
 
@@ -249,9 +262,14 @@ class BlockchainService {
       const content =
         this.parseDecryptedContent(decrypted);
 
+      if (content.diary) {
+        diariesById.set(content.diary.id, content.diary);
+      }
+
       const candidate: FoundEntry = {
         entry: {
           id: pdp.entry.id,
+          ...(content.diary ? { diaryId: content.diary.id } : {}),
           text: content.text,
           createdAt: pdp.entry.createdAt,
 
@@ -285,7 +303,12 @@ class BlockchainService {
       .sort((a, b) => (this.isNewer(a, b) ? -1 : 1))
       .map((item) => item.entry);
 
-    return { entries, found, undecryptable };
+    return {
+      entries,
+      diaries: Array.from(diariesById.values()),
+      found,
+      undecryptable,
+    };
   }
 
   private isNewer(a: FoundEntry, b: FoundEntry): boolean {
@@ -338,9 +361,15 @@ class BlockchainService {
         typeof (parsed as any).text === "string"
       ) {
         const photo = (parsed as any).photo;
+        const diary = (parsed as any).diary;
 
         return {
           text: (parsed as any).text,
+
+          ...(typeof diary?.id === "string" &&
+          typeof diary?.name === "string"
+            ? { diary: { id: diary.id, name: diary.name } }
+            : {}),
 
           ...(this.isEntryPhoto(photo)
             ? { photo }
