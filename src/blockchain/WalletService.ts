@@ -95,7 +95,8 @@ class WalletService {
    */
   async createDiaryTransaction(
     payloads: string[],
-    indexLockingScript?: string
+    indexLockingScript?: string,
+    entryCount = payloads.length
   ) {
     if (!this.client) {
       throw new Error("Wallet ist nicht verbunden");
@@ -112,9 +113,9 @@ class WalletService {
 
     const result = await this.client.createAction({
       description:
-        payloads.length === 1
+        entryCount === 1
           ? "Encrypted diary entry"
-          : `${payloads.length} encrypted diary entries`,
+          : `${entryCount} encrypted diary entries`,
 
       labels: ["peter_diary"],
 

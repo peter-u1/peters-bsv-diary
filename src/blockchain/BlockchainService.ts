@@ -1,6 +1,7 @@
 import WalletService from "./WalletService";
 import EncryptionService from "./EncryptionService";
 import ChainIndexService from "./ChainIndexService";
+import { joinParts, splitPayload } from "./PdpParts";
 import type {
   Diary,
   Entry,
@@ -39,6 +40,8 @@ export type LoadResult = {
   skippedTxs: number;
   /** Transaktionen, die nur über die Wallet gefunden wurden (ohne Index) */
   walletOnlyTxs: number;
+  /** Geteilte Einträge, von denen Teile fehlen */
+  incompleteEntries: number;
 };
 
 // Obergrenzen pro Transaktion (Fotos sind ca. 300 KB als Text)
@@ -61,27 +64,34 @@ class BlockchainService {
       throw new Error("Tagebuch-Passwort fehlt");
     }
 
-    const prepared: { id: string; payload: string }[] = [];
+    // Große Einträge (mit Foto) werden auf mehrere Outputs verteilt,
+    // weil manche Wallets höchstens 100 000 Bytes pro Output erlauben.
+    type Prepared = { id: string; outputs: string[]; size: number };
+
+    const prepared: Prepared[] = [];
 
     for (const entry of entries) {
+      const payload = await this.buildPayload(
+        entry,
+        diaries.find((diary) => diary.id === entry.diaryId),
+        password
+      );
+
       prepared.push({
         id: entry.id,
-        payload: await this.buildPayload(
-          entry,
-          diaries.find((diary) => diary.id === entry.diaryId),
-          password
-        ),
+        outputs: splitPayload(payload, crypto.randomUUID()),
+        size: payload.length,
       });
     }
 
-    const batches: { id: string; payload: string }[][] = [];
-    let current: { id: string; payload: string }[] = [];
+    const batches: Prepared[][] = [];
+    let current: Prepared[] = [];
     let currentSize = 0;
 
     for (const item of prepared) {
       if (
         current.length > 0 &&
-        (currentSize + item.payload.length > MAX_BATCH_BYTES ||
+        (currentSize + item.size > MAX_BATCH_BYTES ||
           current.length >= MAX_BATCH_ENTRIES)
       ) {
         batches.push(current);
@@ -90,7 +100,7 @@ class BlockchainService {
       }
 
       current.push(item);
-      currentSize += item.payload.length;
+      currentSize += item.size;
     }
 
     if (current.length > 0) {
@@ -106,8 +116,9 @@ class BlockchainService {
       const batch = batches[index];
 
       await WalletService.createDiaryTransaction(
-        batch.map((item) => item.payload),
-        indexLockingScript
+        batch.flatMap((item) => item.outputs),
+        indexLockingScript,
+        batch.length
       );
 
       saved += batch.length;
@@ -239,12 +250,33 @@ class BlockchainService {
     let found = 0;
     let undecryptable = 0;
 
+    // Geteilte Einträge (mehrere Outputs) wieder zusammensetzen
+    const texts: { text: string; height: number; order: number }[] = [];
+
     for (const { script, height, order: position } of scripts) {
+      try {
+        texts.push({
+          text: this.scriptToText(script),
+          height,
+          order: position,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    const joined = joinParts(texts);
+
+    for (const { text, height, order: position } of joined.items) {
       let pdp: PDPv1;
 
       try {
-        pdp = this.parsePdp(script);
+        pdp = JSON.parse(text) as PDPv1;
       } catch {
+        continue;
+      }
+
+      if (typeof pdp !== "object" || pdp === null || !pdp.entry) {
         continue;
       }
 
@@ -347,6 +379,7 @@ class BlockchainService {
       undecryptable,
       skippedTxs,
       walletOnlyTxs,
+      incompleteEntries: joined.incomplete,
     };
   }
 
@@ -362,9 +395,9 @@ class BlockchainService {
     return a.order > b.order;
   }
 
-  private parsePdp(
+  private scriptToText(
     lockingScript: string
-  ): PDPv1 {
+  ): string {
     const hex = lockingScript.startsWith("006a")
       ? lockingScript.slice(4)
       : lockingScript;
@@ -381,10 +414,7 @@ class BlockchainService {
       )
     );
 
-    const jsonText =
-      new TextDecoder().decode(bytes);
-
-    return JSON.parse(jsonText) as PDPv1;
+    return new TextDecoder().decode(bytes);
   }
 
   private parseDecryptedContent(

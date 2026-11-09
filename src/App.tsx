@@ -404,8 +404,13 @@ function App() {
           ? ` – ${result.walletOnlyTxs} Transaktion(en) nur über die Wallet gefunden`
           : "";
 
+      const incomplete =
+        result.incompleteEntries > 0
+          ? ` ⚠️ ${result.incompleteEntries} Eintrag/Einträge unvollständig`
+          : "";
+
       setStatus(
-        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}${walletOnly}${notLoaded}`
+        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}${walletOnly}${notLoaded}${incomplete}`
       );
     } catch (error) {
       console.error("BSV-Laden fehlgeschlagen:", error);
