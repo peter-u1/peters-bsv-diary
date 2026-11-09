@@ -3,18 +3,60 @@ import { WalletClient } from "@bsv/sdk";
 class WalletService {
   private client: WalletClient | null = null;
 
-  async connect() {
-    const client = new WalletClient();
+  /**
+   * Verbindet die Wallet. Im BSV Browser ist die Wallet nach dem
+   * Öffnen/Aufwecken der App manchmal noch nicht sofort bereit –
+   * deshalb ein paar Versuche mit kurzer Pause.
+   */
+  async connect(attempts = 3, delayMs = 1500) {
+    let lastError: unknown;
 
-    const result = await client.getPublicKey({
-      identityKey: true,
-    });
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const client = new WalletClient();
 
-    this.client = client;
+        const result = await client.getPublicKey({
+          identityKey: true,
+        });
 
-    console.log("Wallet public key:", result);
+        this.client = client;
 
-    return result;
+        console.log("Wallet public key:", result);
+
+        return result;
+      } catch (error) {
+        lastError = error;
+        console.warn(`Wallet-Verbindung Versuch ${attempt} fehlgeschlagen:`, error);
+
+        if (attempt < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    throw new Error(this.explainMissingWallet(lastError));
+  }
+
+  /** Verständliche Fehlermeldung, je nachdem wo die Seite läuft */
+  private explainMissingWallet(error: unknown): string {
+    const w = globalThis.window as any;
+    const inBsvBrowser =
+      typeof w?.ReactNativeWebView?.postMessage === "function" ||
+      typeof w?.CWI === "object";
+    const original = error instanceof Error ? error.message : String(error);
+
+    if (!inBsvBrowser) {
+      return (
+        "Keine Wallet gefunden. Am iPhone die Seite direkt im BSV Browser " +
+        "öffnen (nicht Safari/Home-Bildschirm), am Mac die BSV Desktop " +
+        `Wallet starten. (${original})`
+      );
+    }
+
+    return (
+      "Der BSV Browser antwortet nicht. Wallet öffnen und entsperren, " +
+      `dann die Seite neu laden. (${original})`
+    );
   }
 
   /**
