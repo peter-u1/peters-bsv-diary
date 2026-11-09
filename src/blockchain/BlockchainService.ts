@@ -35,6 +35,10 @@ export type LoadResult = {
   found: number;
   /** Davon mit dem Passwort nicht entschlüsselbar */
   undecryptable: number;
+  /** Transaktionen, die nicht von der Chain abrufbar waren */
+  skippedTxs: number;
+  /** Transaktionen, die nur über die Wallet gefunden wurden (ohne Index) */
+  walletOnlyTxs: number;
 };
 
 // Obergrenzen pro Transaktion (Fotos sind ca. 300 KB als Text)
@@ -198,6 +202,9 @@ class BlockchainService {
       }
     }
 
+    const skippedTxs = ChainIndexService.lastSkipped;
+    let walletOnlyTxs = 0;
+
     if (WalletService.isConnected()) {
       const result =
         await WalletService.listDiaryActions();
@@ -206,6 +213,8 @@ class BlockchainService {
         if (seenTxids.has(action.txid)) {
           continue;
         }
+
+        walletOnlyTxs++;
 
         const diaryOutputs = (action.outputs ?? []).filter(
           (output: any) =>
@@ -336,6 +345,8 @@ class BlockchainService {
       diaries: Array.from(diariesById.values()),
       found,
       undecryptable,
+      skippedTxs,
+      walletOnlyTxs,
     };
   }
 

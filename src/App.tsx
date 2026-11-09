@@ -394,8 +394,18 @@ function App() {
           ? ` (${result.undecryptable} mit anderem Passwort übersprungen)`
           : "";
 
+      const notLoaded =
+        result.skippedTxs > 0
+          ? ` ⚠️ ${result.skippedTxs} Transaktion(en) nicht abrufbar`
+          : "";
+
+      const walletOnly =
+        result.walletOnlyTxs > 0
+          ? ` – ${result.walletOnlyTxs} Transaktion(en) nur über die Wallet gefunden`
+          : "";
+
       setStatus(
-        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}`
+        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}${walletOnly}${notLoaded}`
       );
     } catch (error) {
       console.error("BSV-Laden fehlgeschlagen:", error);

@@ -34,6 +34,9 @@ class ChainIndexService {
   private addressCache = new Map<string, string>();
   private lastRequest = 0;
 
+  /** Transaktionen, die beim letzten Laden nicht abrufbar/lesbar waren */
+  lastSkipped = 0;
+
   async getIndexAddress(password: string): Promise<string> {
     const cached = this.addressCache.get(password);
 
@@ -82,6 +85,8 @@ class ChainIndexService {
   async loadDiaryTransactions(
     password: string
   ): Promise<ChainDiaryTx[]> {
+    this.lastSkipped = 0;
+
     const address = await this.getIndexAddress(password);
 
     const history = await this.loadHistory(address);
@@ -105,8 +110,28 @@ class ChainIndexService {
         body: JSON.stringify({ txids: chunk }),
       });
 
-      for (const rawTx of rawTxs) {
+      const returned = new Map(
+        (Array.isArray(rawTxs) ? rawTxs : []).map((rawTx) => [
+          rawTx.txid,
+          rawTx.hex,
+        ])
+      );
+
+      for (const txid of chunk) {
+        const rawTx = { txid, hex: returned.get(txid) };
+
+        // Große Transaktionen (z. B. mit Foto) liefert der Sammelabruf
+        // nicht immer mit – dann einzeln nachladen.
         if (!rawTx.hex) {
+          try {
+            rawTx.hex = await this.requestText(`/tx/${txid}/hex`);
+          } catch (error) {
+            console.warn("Einzelabruf fehlgeschlagen:", txid, error);
+          }
+        }
+
+        if (!rawTx.hex) {
+          this.lastSkipped++;
           continue;
         }
 
@@ -121,6 +146,7 @@ class ChainIndexService {
             ),
           });
         } catch (error) {
+          this.lastSkipped++;
           console.warn(
             "Transaktion konnte nicht gelesen werden:",
             rawTx.txid,
@@ -179,6 +205,21 @@ class ChainIndexService {
     path: string,
     init?: RequestInit
   ): Promise<T> {
+    const response = await this.fetchWithRetry(path, init);
+
+    return (await response.json()) as T;
+  }
+
+  private async requestText(path: string): Promise<string> {
+    const response = await this.fetchWithRetry(path);
+
+    return (await response.text()).trim();
+  }
+
+  private async fetchWithRetry(
+    path: string,
+    init?: RequestInit
+  ): Promise<Response> {
     const wait =
       this.lastRequest + REQUEST_DELAY_MS - Date.now();
 
@@ -202,7 +243,7 @@ class ChainIndexService {
         );
       }
 
-      return (await response.json()) as T;
+      return response;
     }
 
     throw new Error(
