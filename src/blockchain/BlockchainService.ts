@@ -42,6 +42,8 @@ export type LoadResult = {
   walletOnlyTxs: number;
   /** Geteilte Einträge, von denen Teile fehlen */
   incompleteEntries: number;
+  /** Wallet war verbunden, hat aber ihren Verlauf nicht geliefert */
+  walletFailed: boolean;
 };
 
 // Obergrenzen pro Transaktion (Fotos sind ca. 300 KB als Text)
@@ -216,11 +218,23 @@ class BlockchainService {
     const skippedTxs = ChainIndexService.lastSkipped;
     let walletOnlyTxs = 0;
 
-    if (WalletService.isConnected()) {
-      const result =
-        await WalletService.listDiaryActions();
+    let walletFailed = false;
 
-      for (const action of result.actions) {
+    // Die Wallet ist nur ein Zusatz (alte Einträge ohne Index-Adresse).
+    // Antwortet sie nicht, wird trotzdem alles von der Chain geladen.
+    let walletActions: any[] = [];
+
+    if (WalletService.isConnected()) {
+      try {
+        walletActions = (await WalletService.listDiaryActions()).actions;
+      } catch (error) {
+        walletFailed = true;
+        console.warn("Wallet-Verlauf nicht abrufbar:", error);
+      }
+    }
+
+    {
+      for (const action of walletActions) {
         if (seenTxids.has(action.txid)) {
           continue;
         }
@@ -380,6 +394,7 @@ class BlockchainService {
       skippedTxs,
       walletOnlyTxs,
       incompleteEntries: joined.incomplete,
+      walletFailed,
     };
   }
 

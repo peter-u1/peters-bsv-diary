@@ -409,8 +409,12 @@ function App() {
           ? ` ⚠️ ${result.incompleteEntries} Eintrag/Einträge unvollständig`
           : "";
 
+      const walletNote = result.walletFailed
+        ? " ⚠️ Wallet-Verlauf nicht erreichbar – ältere Einträge ohne Index fehlen evtl."
+        : "";
+
       setStatus(
-        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}${walletOnly}${notLoaded}${incomplete}`
+        `${result.entries.length} Eintrag/Einträge von BSV geladen ✅${skipped}${walletOnly}${notLoaded}${incomplete}${walletNote}`
       );
     } catch (error) {
       console.error("BSV-Laden fehlgeschlagen:", error);
