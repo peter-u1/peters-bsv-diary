@@ -50,7 +50,9 @@ export type LoadResult = {
 };
 
 // Obergrenzen pro Transaktion (ein Foto ist verschlüsselt ca. 350 KB)
-const MAX_BATCH_BYTES = 900_000;
+// Startgröße pro Transaktion; wird halbiert, wenn die Wallet ablehnt
+const START_TX_BYTES = 450_000;
+const MIN_TX_BYTES = 90_000;
 const MAX_BATCH_ENTRIES = 25;
 
 class BlockchainService {
@@ -71,22 +73,15 @@ class BlockchainService {
       throw new Error("Tagebuch-Passwort fehlt");
     }
 
-    type PlannedTx = {
-      outputs: string[];
-      size: number;
-      /** Einträge, die mit dieser Transaktion vollständig auf der Chain sind */
-      completedIds: string[];
+    // Jeder Output ist ein Baustein; Einträge mit Fotos/Aufnahmen bestehen
+    // aus mehreren Bausteinen (manche Wallets begrenzen die Output-Größe).
+    type Unit = {
+      output: string;
+      /** gesetzt beim letzten Baustein eines Eintrags */
+      completesId?: string;
     };
 
-    const txs: PlannedTx[] = [];
-    let current: PlannedTx = { outputs: [], size: 0, completedIds: [] };
-
-    const flush = () => {
-      if (current.outputs.length > 0) {
-        txs.push(current);
-        current = { outputs: [], size: 0, completedIds: [] };
-      }
-    };
+    const units: Unit[] = [];
 
     for (const entry of entries) {
       const payload = await this.buildPayload(
@@ -95,62 +90,92 @@ class BlockchainService {
         password
       );
 
-      // Manche Wallets erlauben höchstens 100 000 Bytes pro Output.
       const outputs = splitPayload(payload, crypto.randomUUID());
 
-      if (payload.length > MAX_BATCH_BYTES) {
-        // Sehr großer Eintrag: eigene Transaktionen, Teil für Teil
-        flush();
-
-        for (const output of outputs) {
-          if (
-            current.outputs.length > 0 &&
-            current.size + output.length > MAX_BATCH_BYTES
-          ) {
-            flush();
-          }
-
-          current.outputs.push(output);
-          current.size += output.length;
-        }
-
-        current.completedIds.push(entry.id);
-        flush();
-        continue;
-      }
-
-      if (
-        current.outputs.length > 0 &&
-        (current.size + payload.length > MAX_BATCH_BYTES ||
-          current.completedIds.length >= MAX_BATCH_ENTRIES)
-      ) {
-        flush();
-      }
-
-      current.outputs.push(...outputs);
-      current.size += payload.length;
-      current.completedIds.push(entry.id);
+      outputs.forEach((output, index) => {
+        units.push({
+          output,
+          ...(index === outputs.length - 1 ? { completesId: entry.id } : {}),
+        });
+      });
     }
-
-    flush();
 
     const indexLockingScript =
       await ChainIndexService.getIndexLockingScript(password);
 
+    // Wallets begrenzen auch die Größe pro Transaktion – je nach Wallet
+    // unterschiedlich. Lehnt die Wallet eine Transaktion als zu groß ab,
+    // wird mit halber Größe weitergemacht.
+    let budget = START_TX_BYTES;
+    let position = 0;
     let saved = 0;
+    let txCount = 0;
 
-    for (let index = 0; index < txs.length; index++) {
-      const tx = txs[index];
+    while (position < units.length) {
+      const batch: Unit[] = [];
+      let size = 0;
+      let completed = 0;
 
-      await WalletService.createDiaryTransaction(
-        tx.outputs,
-        indexLockingScript,
-        Math.max(1, tx.completedIds.length)
+      while (position + batch.length < units.length) {
+        const unit = units[position + batch.length];
+
+        if (
+          batch.length > 0 &&
+          (size + unit.output.length > budget ||
+            completed >= MAX_BATCH_ENTRIES)
+        ) {
+          break;
+        }
+
+        batch.push(unit);
+        size += unit.output.length;
+
+        if (unit.completesId) {
+          completed++;
+        }
+      }
+
+      const completedIds = batch.flatMap((unit) =>
+        unit.completesId ? [unit.completesId] : []
       );
 
-      saved += tx.completedIds.length;
+      try {
+        await WalletService.createDiaryTransaction(
+          batch.map((unit) => unit.output),
+          indexLockingScript,
+          Math.max(1, completedIds.length)
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
 
-      onSaved?.(tx.completedIds, index + 1, txs.length);
+        if (/at most \d+ bytes/i.test(message) && batch.length > 1) {
+          console.warn(
+            `Wallet lehnt ${size} Bytes ab – versuche kleinere Transaktionen:`,
+            message
+          );
+
+          budget = Math.max(MIN_TX_BYTES, Math.floor(budget / 2));
+          continue;
+        }
+
+        throw error;
+      }
+
+      position += batch.length;
+      saved += completedIds.length;
+      txCount++;
+
+      // Geschätzte Gesamtzahl – kann sich ändern, wenn die Wallet
+      // kleinere Transaktionen verlangt
+      const remaining = units
+        .slice(position)
+        .reduce((sum, unit) => sum + unit.output.length, 0);
+
+      onSaved?.(
+        completedIds,
+        txCount,
+        txCount + Math.ceil(remaining / budget)
+      );
     }
 
     return saved;
