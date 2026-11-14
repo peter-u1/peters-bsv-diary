@@ -2,6 +2,7 @@ import WalletService from "./WalletService";
 import EncryptionService from "./EncryptionService";
 import ChainIndexService from "./ChainIndexService";
 import { joinParts, splitPayload } from "./PdpParts";
+import { MAX_PHOTOS, photosOf } from "../types/Entry";
 import type {
   Diary,
   Entry,
@@ -11,7 +12,7 @@ import type { PDPv1 } from "../types/PDP";
 
 type DecryptedEntryContent = {
   text: string;
-  photo?: EntryPhoto;
+  photos?: EntryPhoto[];
   /** Tagebuch – liegt verschlüsselt im Eintrag, damit auch die Namen privat bleiben */
   diary?: Diary;
   /** Grabstein: Eintrag wurde gelöscht */
@@ -46,15 +47,17 @@ export type LoadResult = {
   walletFailed: boolean;
 };
 
-// Obergrenzen pro Transaktion (Fotos sind ca. 300 KB als Text)
+// Obergrenzen pro Transaktion (ein Foto ist verschlüsselt ca. 350 KB)
 const MAX_BATCH_BYTES = 900_000;
 const MAX_BATCH_ENTRIES = 25;
 
 class BlockchainService {
   /**
    * Speichert mehrere Einträge auf BSV. Kleine Einträge kommen gemeinsam
-   * in eine Transaktion; große (mit Foto) werden auf mehrere verteilt.
-   * onSaved wird nach jeder erfolgreichen Transaktion aufgerufen.
+   * in eine Transaktion. Große Einträge (mit Fotos) werden in Teile
+   * zerlegt; sehr große (mehrere Fotos) verteilen sich auf mehrere
+   * Transaktionen. onSaved wird nach jeder erfolgreichen Transaktion mit
+   * den Einträgen aufgerufen, die damit vollständig gespeichert sind.
    */
   async saveMany(
     entries: Entry[],
@@ -66,11 +69,22 @@ class BlockchainService {
       throw new Error("Tagebuch-Passwort fehlt");
     }
 
-    // Große Einträge (mit Foto) werden auf mehrere Outputs verteilt,
-    // weil manche Wallets höchstens 100 000 Bytes pro Output erlauben.
-    type Prepared = { id: string; outputs: string[]; size: number };
+    type PlannedTx = {
+      outputs: string[];
+      size: number;
+      /** Einträge, die mit dieser Transaktion vollständig auf der Chain sind */
+      completedIds: string[];
+    };
 
-    const prepared: Prepared[] = [];
+    const txs: PlannedTx[] = [];
+    let current: PlannedTx = { outputs: [], size: 0, completedIds: [] };
+
+    const flush = () => {
+      if (current.outputs.length > 0) {
+        txs.push(current);
+        current = { outputs: [], size: 0, completedIds: [] };
+      }
+    };
 
     for (const entry of entries) {
       const payload = await this.buildPayload(
@@ -79,57 +93,62 @@ class BlockchainService {
         password
       );
 
-      prepared.push({
-        id: entry.id,
-        outputs: splitPayload(payload, crypto.randomUUID()),
-        size: payload.length,
-      });
-    }
+      // Manche Wallets erlauben höchstens 100 000 Bytes pro Output.
+      const outputs = splitPayload(payload, crypto.randomUUID());
 
-    const batches: Prepared[][] = [];
-    let current: Prepared[] = [];
-    let currentSize = 0;
+      if (payload.length > MAX_BATCH_BYTES) {
+        // Sehr großer Eintrag: eigene Transaktionen, Teil für Teil
+        flush();
 
-    for (const item of prepared) {
-      if (
-        current.length > 0 &&
-        (currentSize + item.size > MAX_BATCH_BYTES ||
-          current.length >= MAX_BATCH_ENTRIES)
-      ) {
-        batches.push(current);
-        current = [];
-        currentSize = 0;
+        for (const output of outputs) {
+          if (
+            current.outputs.length > 0 &&
+            current.size + output.length > MAX_BATCH_BYTES
+          ) {
+            flush();
+          }
+
+          current.outputs.push(output);
+          current.size += output.length;
+        }
+
+        current.completedIds.push(entry.id);
+        flush();
+        continue;
       }
 
-      current.push(item);
-      currentSize += item.size;
+      if (
+        current.outputs.length > 0 &&
+        (current.size + payload.length > MAX_BATCH_BYTES ||
+          current.completedIds.length >= MAX_BATCH_ENTRIES)
+      ) {
+        flush();
+      }
+
+      current.outputs.push(...outputs);
+      current.size += payload.length;
+      current.completedIds.push(entry.id);
     }
 
-    if (current.length > 0) {
-      batches.push(current);
-    }
+    flush();
 
     const indexLockingScript =
       await ChainIndexService.getIndexLockingScript(password);
 
     let saved = 0;
 
-    for (let index = 0; index < batches.length; index++) {
-      const batch = batches[index];
+    for (let index = 0; index < txs.length; index++) {
+      const tx = txs[index];
 
       await WalletService.createDiaryTransaction(
-        batch.flatMap((item) => item.outputs),
+        tx.outputs,
         indexLockingScript,
-        batch.length
+        Math.max(1, tx.completedIds.length)
       );
 
-      saved += batch.length;
+      saved += tx.completedIds.length;
 
-      onSaved?.(
-        batch.map((item) => item.id),
-        index + 1,
-        batches.length
-      );
+      onSaved?.(tx.completedIds, index + 1, txs.length);
     }
 
     return saved;
@@ -140,11 +159,13 @@ class BlockchainService {
     diary: Diary | undefined,
     password: string
   ): Promise<string> {
+    const photos = photosOf(entry);
+
     const content: DecryptedEntryContent = entry.deleted
       ? { text: "", deleted: true }
       : {
           text: entry.text,
-          ...(entry.photo ? { photo: entry.photo } : {}),
+          ...(photos.length > 0 ? { photos } : {}),
           ...(diary ? { diary: { id: diary.id, name: diary.name } } : {}),
         };
 
@@ -335,8 +356,8 @@ class BlockchainService {
             ? { updatedAt: pdp.entry.updatedAt }
             : {}),
 
-          ...(content.photo
-            ? { photo: content.photo }
+          ...(content.photos
+            ? { photos: content.photos }
             : {}),
 
           synced: true,
@@ -444,7 +465,17 @@ class BlockchainService {
         parsed !== null &&
         typeof (parsed as any).text === "string"
       ) {
-        const photo = (parsed as any).photo;
+        // Neues Format: "photos" (Liste); altes Format: "photo" (eines)
+        const rawPhotos: unknown[] = Array.isArray((parsed as any).photos)
+          ? (parsed as any).photos
+          : (parsed as any).photo
+            ? [(parsed as any).photo]
+            : [];
+
+        const photos = rawPhotos
+          .filter((photo): photo is EntryPhoto => this.isEntryPhoto(photo))
+          .slice(0, MAX_PHOTOS);
+
         const diary = (parsed as any).diary;
 
         return {
@@ -457,9 +488,7 @@ class BlockchainService {
             ? { diary: { id: diary.id, name: diary.name } }
             : {}),
 
-          ...(this.isEntryPhoto(photo)
-            ? { photo }
-            : {}),
+          ...(photos.length > 0 ? { photos } : {}),
         };
       }
     } catch {

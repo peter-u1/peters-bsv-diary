@@ -27,5 +27,18 @@ export type Entry = {
   onChain?: boolean;
   /** Gelöscht – wird als "Grabstein" hochgeladen, damit er überall verschwindet */
   deleted?: boolean;
+  /** Bis zu MAX_PHOTOS Fotos */
+  photos?: EntryPhoto[];
+  /** Altes Format (ein Foto) – wird nur noch gelesen */
   photo?: EntryPhoto;
 };
+
+export const MAX_PHOTOS = 10;
+
+/** Fotos eines Eintrags – egal ob im neuen oder alten Format gespeichert */
+export const photosOf = (entry: Entry): EntryPhoto[] =>
+  entry.photos && entry.photos.length > 0
+    ? entry.photos.slice(0, MAX_PHOTOS)
+    : entry.photo
+      ? [entry.photo]
+      : [];

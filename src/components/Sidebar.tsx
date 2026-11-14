@@ -1,3 +1,4 @@
+import { photosOf } from "../types/Entry";
 import type { Entry } from "../types/Entry";
 
 type SidebarProps = {
@@ -43,7 +44,9 @@ function Sidebar({ entries, selectedId, onSelect, onNew }: SidebarProps) {
                 )}
               </span>
               <span className="entry-preview">
-                {entry.photo && "📷 "}
+                {photosOf(entry).length === 1 && "📷 "}
+                {photosOf(entry).length > 1 &&
+                  `📷${photosOf(entry).length} `}
                 {entry.text}
               </span>
             </button>

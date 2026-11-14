@@ -1,4 +1,5 @@
-import { DEFAULT_DIARY } from "../types/Entry";
+import { DEFAULT_DIARY, MAX_PHOTOS } from "../types/Entry";
+import LocalStore from "./LocalStore";
 import type {
   Diary,
   Entry,
@@ -10,6 +11,13 @@ const DIARIES_KEY = "diary_list";
 const ACTIVE_DIARY_KEY = "diary_active";
 
 class DiaryService {
+  /** Wird aufgerufen, wenn das lokale Speichern im Hintergrund scheitert */
+  onSaveError?: (error: unknown) => void;
+
+  /** true = IndexedDB geht nicht, es wird localStorage verwendet */
+  private useLocalStorage = false;
+  private pendingSave: Promise<void> = Promise.resolve();
+
   /* ---------- Tagebücher (Reiter) ---------- */
 
   loadDiaries(): Diary[] {
@@ -157,29 +165,49 @@ class DiaryService {
 
   /* ---------- Einträge ---------- */
 
-  load(): Entry[] {
+  /**
+   * Lädt die lokalen Einträge. Sie liegen in IndexedDB (viel Platz für
+   * Fotos); Einträge aus dem alten localStorage werden einmalig umgezogen.
+   */
+  async load(): Promise<Entry[]> {
+    let stored: unknown;
+
     try {
-      const storedEntries =
-        localStorage.getItem(STORAGE_KEY);
-
-      if (!storedEntries) {
-        return [];
-      }
-
-      const parsed: unknown = JSON.parse(storedEntries);
-
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed.filter(
-        (entry): entry is Entry =>
-          typeof entry === "object" &&
-          entry !== null &&
-          typeof entry.id === "string" &&
-          typeof entry.text === "string" &&
-          typeof entry.createdAt === "string"
+      stored = await LocalStore.get(STORAGE_KEY);
+    } catch (error) {
+      console.warn(
+        "IndexedDB nicht verfügbar – verwende localStorage:",
+        error
       );
+
+      this.useLocalStorage = true;
+
+      return this.validEntries(this.readLegacy());
+    }
+
+    if (stored !== undefined) {
+      return this.validEntries(stored);
+    }
+
+    // Erster Start mit IndexedDB: alte Einträge umziehen
+    const legacy = this.validEntries(this.readLegacy());
+
+    if (legacy.length > 0) {
+      try {
+        await LocalStore.set(STORAGE_KEY, legacy);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (error) {
+        console.warn("Umzug nach IndexedDB fehlgeschlagen:", error);
+        this.useLocalStorage = true;
+      }
+    }
+
+    return legacy;
+  }
+
+  private readLegacy(): unknown {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
     } catch (error) {
       console.error(
         "Lokale Einträge konnten nicht geladen werden:",
@@ -190,10 +218,25 @@ class DiaryService {
     }
   }
 
+  private validEntries(value: unknown): Entry[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.filter(
+      (entry): entry is Entry =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof entry.id === "string" &&
+        typeof entry.text === "string" &&
+        typeof entry.createdAt === "string"
+    );
+  }
+
   create(
     text: string,
     entries: Entry[],
-    photo: EntryPhoto | undefined,
+    photos: EntryPhoto[],
     diaryId: string
   ): Entry[] {
     const newEntry: Entry = {
@@ -202,7 +245,9 @@ class DiaryService {
       onChain: false,
       text,
       createdAt: new Date().toLocaleString("de-AT"),
-      ...(photo ? { photo } : {}),
+      ...(photos.length > 0
+        ? { photos: photos.slice(0, MAX_PHOTOS) }
+        : {}),
     };
 
     const updatedEntries = [newEntry, ...entries];
@@ -216,7 +261,7 @@ class DiaryService {
     id: string,
     text: string,
     entries: Entry[],
-    photo: EntryPhoto | null
+    photos: EntryPhoto[]
   ): Entry[] {
     const updatedEntries = entries.map((entry) => {
       if (entry.id !== id) {
@@ -230,21 +275,19 @@ class DiaryService {
         synced: false,
       };
 
-      if (photo) {
-        return {
-          ...updatedEntry,
-          photo,
-        };
-      }
-
+      // Altes Ein-Foto-Feld entfällt, Fotos stehen nur noch in "photos"
       const {
-        photo: removedPhoto,
-        ...entryWithoutPhoto
+        photo: legacyPhoto,
+        photos: previousPhotos,
+        ...entryWithoutPhotos
       } = updatedEntry;
 
-      void removedPhoto;
+      void legacyPhoto;
+      void previousPhotos;
 
-      return entryWithoutPhoto;
+      return photos.length > 0
+        ? { ...entryWithoutPhotos, photos: photos.slice(0, MAX_PHOTOS) }
+        : entryWithoutPhotos;
     });
 
     this.save(updatedEntries);
@@ -343,10 +386,22 @@ class DiaryService {
   }
 
   private save(entries: Entry[]): void {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(entries)
-    );
+    if (this.useLocalStorage) {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(entries)
+      );
+
+      return;
+    }
+
+    // Nacheinander schreiben, damit immer der letzte Stand gewinnt
+    this.pendingSave = this.pendingSave
+      .then(() => LocalStore.set(STORAGE_KEY, entries))
+      .catch((error) => {
+        console.error("Lokales Speichern fehlgeschlagen:", error);
+        this.onSaveError?.(error);
+      });
   }
 }
 

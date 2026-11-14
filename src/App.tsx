@@ -4,7 +4,7 @@ import type React from "react";
 import Sidebar from "./components/Sidebar";
 import Stepper from "./components/Stepper";
 
-import { DEFAULT_DIARY } from "./types/Entry";
+import { DEFAULT_DIARY, MAX_PHOTOS, photosOf } from "./types/Entry";
 import type { Diary, Entry, EntryPhoto } from "./types/Entry";
 
 import DiaryService from "./services/DiaryService";
@@ -113,14 +113,54 @@ function App() {
   // null = neuer Eintrag
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editorText, setEditorText] = useState("");
-  const [editorPhoto, setEditorPhoto] = useState<EntryPhoto | null>(null);
+  const [editorPhotos, setEditorPhotos] = useState<EntryPhoto[]>([]);
+
+  // Foto, das gerade groß angezeigt wird
+  const [zoomedPhoto, setZoomedPhoto] = useState<EntryPhoto | null>(null);
+
+  // Erst wenn die lokalen Einträge geladen sind, darf gespeichert werden
+  const [ready, setReady] = useState(false);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    setEntries(DiaryService.load());
+    let cancelled = false;
+
+    DiaryService.onSaveError = () => {
+      setStatus(
+        "⚠️ Lokales Speichern fehlgeschlagen. Möglicherweise ist der Browserspeicher voll."
+      );
+    };
+
+    void DiaryService.load().then((loaded) => {
+      if (!cancelled) {
+        setEntries(loaded);
+        setReady(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // Großes Foto mit Esc schließen
+  useEffect(() => {
+    if (!zoomedPhoto) {
+      return;
+    }
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setZoomedPhoto(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomedPhoto]);
 
   const activeDiary =
     diaries.find((diary) => diary.id === activeDiaryId) ?? DEFAULT_DIARY;
@@ -145,7 +185,8 @@ function App() {
   const openEntry = (entry: Entry | null) => {
     setSelectedId(entry?.id ?? null);
     setEditorText(entry?.text ?? "");
-    setEditorPhoto(entry?.photo ?? null);
+    setEditorPhotos(entry ? photosOf(entry) : []);
+    setZoomedPhoto(null);
     setConfirmEntryDelete(false);
     resetPhotoInput();
 
@@ -241,18 +282,55 @@ function App() {
 
   /* ---------- Einträge ---------- */
 
-  const preparePhoto = async (file: File | undefined) => {
-    if (!file) {
+  const preparePhotos = async (fileList: FileList | null) => {
+    const files = Array.from(fileList ?? []);
+
+    if (files.length === 0) {
       return;
     }
 
-    try {
-      setStatus("Foto wird verkleinert und vorbereitet...");
-      setEditorPhoto(await PhotoService.prepare(file));
-      setStatus("Foto ist bereit ✅");
-    } catch (error) {
-      console.error("Foto-Fehler:", error);
-      setStatus(`Foto-Fehler: ${errorText(error)}`);
+    const free = MAX_PHOTOS - editorPhotos.length;
+
+    if (free <= 0) {
+      setStatus(`Maximal ${MAX_PHOTOS} Fotos pro Eintrag.`);
+      resetPhotoInput();
+      return;
+    }
+
+    const selected = files.slice(0, free);
+    const added: EntryPhoto[] = [];
+    let failure = "";
+
+    for (let index = 0; index < selected.length; index++) {
+      try {
+        setStatus(
+          selected.length > 1
+            ? `Foto ${index + 1} von ${selected.length} wird verkleinert...`
+            : "Foto wird verkleinert und vorbereitet..."
+        );
+
+        added.push(await PhotoService.prepare(selected[index]));
+      } catch (error) {
+        console.error("Foto-Fehler:", error);
+        failure = `Foto-Fehler bei „${selected[index].name}“: ${errorText(error)}`;
+      }
+    }
+
+    setEditorPhotos((current) =>
+      [...current, ...added].slice(0, MAX_PHOTOS)
+    );
+    resetPhotoInput();
+
+    if (failure) {
+      setStatus(failure);
+    } else if (files.length > free) {
+      setStatus(
+        `${added.length} Foto(s) bereit ✅ – mehr als ${MAX_PHOTOS} pro Eintrag gehen nicht, der Rest wurde weggelassen.`
+      );
+    } else {
+      setStatus(
+        added.length > 1 ? `${added.length} Fotos sind bereit ✅` : "Foto ist bereit ✅"
+      );
     }
   };
 
@@ -269,7 +347,7 @@ function App() {
             selectedEntry.id,
             editorText.trim(),
             entries,
-            editorPhoto
+            editorPhotos
           )
         );
         setStatus("Änderungen lokal gespeichert ✅ – noch nicht auf BSV.");
@@ -278,7 +356,7 @@ function App() {
           DiaryService.create(
             editorText.trim(),
             entries,
-            editorPhoto ?? undefined,
+            editorPhotos,
             activeDiary.id
           )
         );
@@ -425,6 +503,14 @@ function App() {
   };
 
   /* ---------- Oberfläche ---------- */
+
+  if (!ready) {
+    return (
+      <div className="app">
+        <p className="status">Lade Tagebuch...</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -646,34 +732,52 @@ function App() {
           />
 
           <label className="photo-input">
-            {editorPhoto ? "Foto ersetzen:" : "Foto hinzufügen:"}
+            Fotos hinzufügen ({editorPhotos.length} von {MAX_PHOTOS}):
             <input
               ref={photoInputRef}
               type="file"
+              multiple
+              disabled={editorPhotos.length >= MAX_PHOTOS}
               accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
               onChange={(event) => {
-                void preparePhoto(event.target.files?.[0]);
+                void preparePhotos(event.target.files);
               }}
             />
           </label>
 
-          {editorPhoto && (
-            <figure className="photo-preview">
-              <img src={editorPhoto.dataUrl} alt={editorPhoto.name} />
-              <figcaption>
-                {editorPhoto.name}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => {
-                    setEditorPhoto(null);
-                    resetPhotoInput();
-                  }}
-                >
-                  entfernen
-                </button>
-              </figcaption>
-            </figure>
+          {editorPhotos.length > 0 && (
+            <div
+              className={
+                editorPhotos.length === 1 ? "photo-grid single" : "photo-grid"
+              }
+            >
+              {editorPhotos.map((photo, index) => (
+                <figure className="photo-preview" key={index}>
+                  <button
+                    type="button"
+                    className="photo-zoom"
+                    title="Groß anzeigen"
+                    onClick={() => setZoomedPhoto(photo)}
+                  >
+                    <img src={photo.dataUrl} alt={photo.name} />
+                  </button>
+                  <figcaption>
+                    <span className="photo-name">{photo.name}</span>
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() =>
+                        setEditorPhotos((current) =>
+                          current.filter((_, position) => position !== index)
+                        )
+                      }
+                    >
+                      entfernen
+                    </button>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
           )}
 
           <div className="editor-actions">
@@ -709,6 +813,25 @@ function App() {
           </div>
         </main>
       </div>
+
+      {zoomedPhoto && (
+        <div
+          className="lightbox"
+          role="dialog"
+          aria-label="Foto groß"
+          onClick={() => setZoomedPhoto(null)}
+        >
+          <img src={zoomedPhoto.dataUrl} alt={zoomedPhoto.name} />
+          <button
+            type="button"
+            className="lightbox-close"
+            aria-label="Schließen"
+            onClick={() => setZoomedPhoto(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }
