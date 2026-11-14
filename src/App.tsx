@@ -60,6 +60,30 @@ const useSetting = (setting: Setting) => {
   return [value, change] as const;
 };
 
+/* ---------- Passwort merken (nur auf Wunsch, pro Gerät) ---------- */
+
+const PASSWORD_KEY = "diary_password";
+
+const loadRememberedPassword = () => {
+  try {
+    return localStorage.getItem(PASSWORD_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+
+const storeRememberedPassword = (password: string | null) => {
+  try {
+    if (password) {
+      localStorage.setItem(PASSWORD_KEY, password);
+    } else {
+      localStorage.removeItem(PASSWORD_KEY);
+    }
+  } catch {
+    // Speicher nicht verfügbar – dann wird eben nichts gemerkt
+  }
+};
+
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -88,7 +112,10 @@ const createdTime = (entry: Entry) => {
 };
 
 function App() {
-  const [diaryPassword, setDiaryPassword] = useState("");
+  const [diaryPassword, setDiaryPassword] = useState(loadRememberedPassword);
+  const [rememberPassword, setRememberPassword] = useState(
+    () => loadRememberedPassword() !== ""
+  );
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
@@ -529,10 +556,33 @@ function App() {
           <input
             type="password"
             value={diaryPassword}
-            onChange={(event) => setDiaryPassword(event.target.value)}
+            onChange={(event) => {
+              setDiaryPassword(event.target.value);
+
+              if (rememberPassword) {
+                storeRememberedPassword(event.target.value);
+              }
+            }}
             placeholder="Tagebuch-Passwort"
             autoComplete="current-password"
           />
+
+          <label
+            className="remember-password"
+            title="Speichert das Passwort unverschlüsselt in diesem Browser"
+          >
+            <input
+              type="checkbox"
+              checked={rememberPassword}
+              onChange={(event) => {
+                setRememberPassword(event.target.checked);
+                storeRememberedPassword(
+                  event.target.checked ? diaryPassword : null
+                );
+              }}
+            />
+            merken
+          </label>
 
           <button type="button" onClick={loadFromBsv} disabled={busy}>
             Von BSV laden

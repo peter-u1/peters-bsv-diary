@@ -449,3 +449,12 @@ button.link {
   border-radius: 8px;
   cursor: pointer;
 }
+
+.remember-password {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
