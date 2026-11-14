@@ -1,8 +1,9 @@
-import { DEFAULT_DIARY, MAX_PHOTOS } from "../types/Entry";
+import { DEFAULT_DIARY, MAX_AUDIOS, MAX_PHOTOS } from "../types/Entry";
 import LocalStore from "./LocalStore";
 import type {
   Diary,
   Entry,
+  EntryAudio,
   EntryPhoto,
 } from "../types/Entry";
 
@@ -237,7 +238,8 @@ class DiaryService {
     text: string,
     entries: Entry[],
     photos: EntryPhoto[],
-    diaryId: string
+    diaryId: string,
+    audios: EntryAudio[] = []
   ): Entry[] {
     const newEntry: Entry = {
       id: crypto.randomUUID(),
@@ -247,6 +249,9 @@ class DiaryService {
       createdAt: new Date().toLocaleString("de-AT"),
       ...(photos.length > 0
         ? { photos: photos.slice(0, MAX_PHOTOS) }
+        : {}),
+      ...(audios.length > 0
+        ? { audios: audios.slice(0, MAX_AUDIOS) }
         : {}),
     };
 
@@ -261,7 +266,8 @@ class DiaryService {
     id: string,
     text: string,
     entries: Entry[],
-    photos: EntryPhoto[]
+    photos: EntryPhoto[],
+    audios: EntryAudio[] = []
   ): Entry[] {
     const updatedEntries = entries.map((entry) => {
       if (entry.id !== id) {
@@ -279,15 +285,23 @@ class DiaryService {
       const {
         photo: legacyPhoto,
         photos: previousPhotos,
-        ...entryWithoutPhotos
+        audios: previousAudios,
+        ...entryWithoutAttachments
       } = updatedEntry;
 
       void legacyPhoto;
       void previousPhotos;
+      void previousAudios;
 
-      return photos.length > 0
-        ? { ...entryWithoutPhotos, photos: photos.slice(0, MAX_PHOTOS) }
-        : entryWithoutPhotos;
+      return {
+        ...entryWithoutAttachments,
+        ...(photos.length > 0
+          ? { photos: photos.slice(0, MAX_PHOTOS) }
+          : {}),
+        ...(audios.length > 0
+          ? { audios: audios.slice(0, MAX_AUDIOS) }
+          : {}),
+      };
     });
 
     this.save(updatedEntries);

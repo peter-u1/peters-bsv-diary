@@ -4,6 +4,14 @@ export type EntryPhoto = {
   dataUrl: string;
 };
 
+export type EntryAudio = {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+  /** Länge in Sekunden */
+  seconds: number;
+};
+
 export type Diary = {
   id: string;
   name: string;
@@ -27,6 +35,8 @@ export type Entry = {
   onChain?: boolean;
   /** Gelöscht – wird als "Grabstein" hochgeladen, damit er überall verschwindet */
   deleted?: boolean;
+  /** Bis zu MAX_AUDIOS Sprachaufnahmen */
+  audios?: EntryAudio[];
   /** Bis zu MAX_PHOTOS Fotos */
   photos?: EntryPhoto[];
   /** Altes Format (ein Foto) – wird nur noch gelesen */
@@ -34,6 +44,7 @@ export type Entry = {
 };
 
 export const MAX_PHOTOS = 10;
+export const MAX_AUDIOS = 3;
 
 /** Fotos eines Eintrags – egal ob im neuen oder alten Format gespeichert */
 export const photosOf = (entry: Entry): EntryPhoto[] =>

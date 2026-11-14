@@ -2,10 +2,11 @@ import WalletService from "./WalletService";
 import EncryptionService from "./EncryptionService";
 import ChainIndexService from "./ChainIndexService";
 import { joinParts, splitPayload } from "./PdpParts";
-import { MAX_PHOTOS, photosOf } from "../types/Entry";
+import { MAX_AUDIOS, MAX_PHOTOS, photosOf } from "../types/Entry";
 import type {
   Diary,
   Entry,
+  EntryAudio,
   EntryPhoto,
 } from "../types/Entry";
 import type { PDPv1 } from "../types/PDP";
@@ -13,6 +14,7 @@ import type { PDPv1 } from "../types/PDP";
 type DecryptedEntryContent = {
   text: string;
   photos?: EntryPhoto[];
+  audios?: EntryAudio[];
   /** Tagebuch – liegt verschlüsselt im Eintrag, damit auch die Namen privat bleiben */
   diary?: Diary;
   /** Grabstein: Eintrag wurde gelöscht */
@@ -166,6 +168,9 @@ class BlockchainService {
       : {
           text: entry.text,
           ...(photos.length > 0 ? { photos } : {}),
+          ...(entry.audios && entry.audios.length > 0
+            ? { audios: entry.audios.slice(0, MAX_AUDIOS) }
+            : {}),
           ...(diary ? { diary: { id: diary.id, name: diary.name } } : {}),
         };
 
@@ -360,6 +365,10 @@ class BlockchainService {
             ? { photos: content.photos }
             : {}),
 
+          ...(content.audios
+            ? { audios: content.audios }
+            : {}),
+
           synced: true,
           onChain: true,
         },
@@ -476,6 +485,14 @@ class BlockchainService {
           .filter((photo): photo is EntryPhoto => this.isEntryPhoto(photo))
           .slice(0, MAX_PHOTOS);
 
+        const audios = (
+          Array.isArray((parsed as any).audios) ? (parsed as any).audios : []
+        )
+          .filter((audio: unknown): audio is EntryAudio =>
+            this.isEntryAudio(audio)
+          )
+          .slice(0, MAX_AUDIOS);
+
         const diary = (parsed as any).diary;
 
         return {
@@ -489,6 +506,8 @@ class BlockchainService {
             : {}),
 
           ...(photos.length > 0 ? { photos } : {}),
+
+          ...(audios.length > 0 ? { audios } : {}),
         };
       }
     } catch {
@@ -498,6 +517,28 @@ class BlockchainService {
     return {
       text: decrypted,
     };
+  }
+
+  private isEntryAudio(
+    value: unknown
+  ): value is EntryAudio {
+    if (
+      typeof value !== "object" ||
+      value === null
+    ) {
+      return false;
+    }
+
+    const audio =
+      value as Record<string, unknown>;
+
+    return (
+      typeof audio.name === "string" &&
+      typeof audio.mimeType === "string" &&
+      typeof audio.seconds === "number" &&
+      typeof audio.dataUrl === "string" &&
+      audio.dataUrl.startsWith("data:audio/")
+    );
   }
 
   private isEntryPhoto(

@@ -44,6 +44,7 @@ function Sidebar({ entries, selectedId, onSelect, onNew }: SidebarProps) {
                 )}
               </span>
               <span className="entry-preview">
+                {(entry.audios?.length ?? 0) > 0 && "🎙 "}
                 {photosOf(entry).length === 1 && "📷 "}
                 {photosOf(entry).length > 1 &&
                   `📷${photosOf(entry).length} `}

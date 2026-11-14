@@ -4,11 +4,17 @@ import type React from "react";
 import Sidebar from "./components/Sidebar";
 import Stepper from "./components/Stepper";
 
-import { DEFAULT_DIARY, MAX_PHOTOS, photosOf } from "./types/Entry";
-import type { Diary, Entry, EntryPhoto } from "./types/Entry";
+import {
+  DEFAULT_DIARY,
+  MAX_AUDIOS,
+  MAX_PHOTOS,
+  photosOf,
+} from "./types/Entry";
+import type { Diary, Entry, EntryAudio, EntryPhoto } from "./types/Entry";
 
 import DiaryService from "./services/DiaryService";
 import PhotoService from "./services/PhotoService";
+import AudioService, { MAX_AUDIO_SECONDS } from "./services/AudioService";
 
 import WalletService from "./blockchain/WalletService";
 import BlockchainService from "./blockchain/BlockchainService";
@@ -84,6 +90,18 @@ const storeRememberedPassword = (password: string | null) => {
   }
 };
 
+/* ---------- Diktieren (Spracherkennung des Browsers) ---------- */
+
+const SpeechRecognitionClass: (new () => any) | undefined =
+  typeof window !== "undefined"
+    ? ((window as any).SpeechRecognition ??
+      (window as any).webkitSpeechRecognition)
+    : undefined;
+
+/** 75 → "1:15" */
+const formatSeconds = (seconds: number) =>
+  `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -142,6 +160,17 @@ function App() {
   const [editorText, setEditorText] = useState("");
   const [editorPhotos, setEditorPhotos] = useState<EntryPhoto[]>([]);
 
+  const [editorAudios, setEditorAudios] = useState<EntryAudio[]>([]);
+
+  // null = es läuft keine Aufnahme, sonst die bisherige Dauer in Sekunden
+  const [recordingSeconds, setRecordingSeconds] = useState<number | null>(
+    null
+  );
+
+  // Diktat: gesprochener Text landet direkt im Eingabefeld
+  const [dictating, setDictating] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
   // Foto, das gerade groß angezeigt wird
   const [zoomedPhoto, setZoomedPhoto] = useState<EntryPhoto | null>(null);
 
@@ -171,6 +200,29 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // Aufnahme-Uhr; nach der Höchstdauer wird automatisch gestoppt
+  const isRecording = recordingSeconds !== null;
+
+  useEffect(() => {
+    if (!isRecording) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setRecordingSeconds((current) =>
+        current === null ? null : current + 1
+      );
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (recordingSeconds !== null && recordingSeconds >= MAX_AUDIO_SECONDS) {
+      void stopRecording();
+    }
+  });
 
   // Großes Foto mit Esc schließen
   useEffect(() => {
@@ -213,6 +265,12 @@ function App() {
     setSelectedId(entry?.id ?? null);
     setEditorText(entry?.text ?? "");
     setEditorPhotos(entry ? photosOf(entry) : []);
+    setEditorAudios(entry?.audios ?? []);
+
+    // Eine laufende Aufnahme gehört zum vorherigen Eintrag: verwerfen
+    AudioService.cancel();
+    setRecordingSeconds(null);
+    stopDictation();
     setZoomedPhoto(null);
     setConfirmEntryDelete(false);
     resetPhotoInput();
@@ -361,9 +419,151 @@ function App() {
     }
   };
 
+  const stopDictation = () => {
+    const recognition = recognitionRef.current;
+
+    recognitionRef.current = null;
+    setDictating(false);
+
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+
+      try {
+        recognition.stop();
+      } catch {
+        // war schon beendet
+      }
+    }
+  };
+
+  const startDictation = () => {
+    if (!SpeechRecognitionClass || dictating) {
+      return;
+    }
+
+    const recognition = new SpeechRecognitionClass();
+
+    recognition.lang = "de-AT";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event: any) => {
+      let finalText = "";
+      let interim = "";
+
+      for (let index = event.resultIndex; index < event.results.length; index++) {
+        const result = event.results[index];
+
+        if (result.isFinal) {
+          finalText += result[0].transcript;
+        } else {
+          interim += result[0].transcript;
+        }
+      }
+
+      if (finalText.trim()) {
+        setEditorText((current) =>
+          current && !/\s$/.test(current)
+            ? `${current} ${finalText.trim()}`
+            : current + finalText.trim()
+        );
+      }
+
+      setStatus(
+        interim.trim()
+          ? `🎤 ${interim.trim()}`
+          : "Diktat läuft 🎤 – einfach sprechen"
+      );
+    };
+
+    recognition.onerror = (event: any) => {
+      // Sprechpausen sind kein Fehler
+      if (event.error === "no-speech" || event.error === "aborted") {
+        return;
+      }
+
+      console.error("Diktat-Fehler:", event.error);
+
+      setStatus(
+        event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? "Diktat-Fehler: kein Zugriff auf Mikrofon oder Spracherkennung – bitte in den Einstellungen erlauben."
+          : `Diktat-Fehler: ${event.error}`
+      );
+    };
+
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+        setDictating(false);
+        setStatus((current) =>
+          current.startsWith("🎤") || current.startsWith("Diktat läuft")
+            ? "Diktat beendet – Text bitte prüfen."
+            : current
+        );
+      }
+    };
+
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+      setDictating(true);
+      setStatus("Diktat läuft 🎤 – einfach sprechen");
+    } catch (error) {
+      console.error("Diktat-Fehler:", error);
+      setStatus(`Diktat-Fehler: ${errorText(error)}`);
+    }
+  };
+
+  const startRecording = async () => {
+    if (editorAudios.length >= MAX_AUDIOS) {
+      setStatus(`Maximal ${MAX_AUDIOS} Sprachaufnahmen pro Eintrag.`);
+      return;
+    }
+
+    try {
+      await AudioService.start();
+      setRecordingSeconds(0);
+      setStatus("Aufnahme läuft 🎙");
+    } catch (error) {
+      console.error("Aufnahme-Fehler:", error);
+      setStatus(`Aufnahme-Fehler: ${errorText(error)}`);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!AudioService.isRecording()) {
+      return;
+    }
+
+    setRecordingSeconds(null);
+
+    try {
+      const audio = await AudioService.stop();
+
+      setEditorAudios((current) => [...current, audio].slice(0, MAX_AUDIOS));
+      setStatus(
+        `Aufnahme (${formatSeconds(audio.seconds)}) ist bereit ✅ – mit „Eintrag speichern“ übernehmen.`
+      );
+    } catch (error) {
+      console.error("Aufnahme-Fehler:", error);
+      setStatus(`Aufnahme-Fehler: ${errorText(error)}`);
+    }
+  };
+
   const saveLocally = () => {
-    if (!editorText.trim()) {
-      setStatus("Bitte zuerst einen Text eingeben.");
+    if (recordingSeconds !== null) {
+      setStatus("Bitte zuerst die laufende Aufnahme stoppen.");
+      return;
+    }
+
+    if (
+      !editorText.trim() &&
+      editorPhotos.length === 0 &&
+      editorAudios.length === 0
+    ) {
+      setStatus("Bitte zuerst einen Text eingeben oder etwas anhängen.");
       return;
     }
 
@@ -374,7 +574,8 @@ function App() {
             selectedEntry.id,
             editorText.trim(),
             entries,
-            editorPhotos
+            editorPhotos,
+            editorAudios
           )
         );
         setStatus("Änderungen lokal gespeichert ✅ – noch nicht auf BSV.");
@@ -384,7 +585,8 @@ function App() {
             editorText.trim(),
             entries,
             editorPhotos,
-            activeDiary.id
+            activeDiary.id,
+            editorAudios
           )
         );
         openEntry(null);
@@ -829,6 +1031,65 @@ function App() {
               ))}
             </div>
           )}
+
+          <div className="dictation">
+            {SpeechRecognitionClass ? (
+              <button
+                type="button"
+                className={dictating ? "danger" : undefined}
+                onClick={dictating ? stopDictation : startDictation}
+                disabled={isRecording}
+              >
+                {dictating ? "■ Diktat stoppen" : "🎤 Diktieren"}
+              </button>
+            ) : (
+              <span className="hint">
+                Diktieren: ins Textfeld tippen und die Mikrofon-Taste der
+                Tastatur verwenden.
+              </span>
+            )}
+          </div>
+
+          <div className="audio-section">
+            {isRecording ? (
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void stopRecording()}
+              >
+                ■ Aufnahme stoppen ({formatSeconds(recordingSeconds ?? 0)} /{" "}
+                {formatSeconds(MAX_AUDIO_SECONDS)})
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void startRecording()}
+                disabled={editorAudios.length >= MAX_AUDIOS || dictating}
+              >
+                🎙 Sprachaufnahme ({editorAudios.length} von {MAX_AUDIOS})
+              </button>
+            )}
+
+            {editorAudios.map((audio, index) => (
+              <div className="audio-item" key={index}>
+                <audio controls preload="metadata" src={audio.dataUrl} />
+                <span className="audio-length">
+                  {formatSeconds(audio.seconds)}
+                </span>
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() =>
+                    setEditorAudios((current) =>
+                      current.filter((_, position) => position !== index)
+                    )
+                  }
+                >
+                  entfernen
+                </button>
+              </div>
+            ))}
+          </div>
 
           <div className="editor-actions">
             <button type="button" className="primary" onClick={saveLocally}>
